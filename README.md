@@ -40,18 +40,34 @@ To force a fresh seed, drop or recreate the database (or delete demo users) so t
 
 `AdminSeed` in `appsettings.json` creates the first admin user if missing (see the same frontend README for example credentials).
 
+## Where is my connection string?
+
+| What | Where |
+|------|--------|
+| **Local SQL Server (dev)** | `HealUp.Api/appsettings.Development.json` → `ConnectionStrings` → `DefaultConnection` (this file is gitignored; copy from `appsettings.Development.example.json` if needed). |
+| **MonsterASP hosted SQL** | Your hosting control panel (database user + server name), or the connection string they give you — use that in production `appsettings` / env vars on the server, **not** in public Git. |
+
+To **see** your local connection string safely (password masked):
+
+```powershell
+cd backend-dotnet
+dotnet run --project HealUp.DataExport -- --show-connection ".\HealUp.Api\appsettings.Development.json"
+```
+
 ## Copy local database data to MonsterASP (Run T-SQL)
 
 The hosted database has the **schema** from EF migrations but may be **empty** or out of sync with your dev machine. To generate a script that **replaces** all HealUp table rows with a copy of your local data:
 
 1. Ensure the **API has run migrations** on the online DB at least once (tables exist).
-2. On your PC, from `backend-dotnet`:
+2. On your PC, from `backend-dotnet`, either pass the path to `appsettings.Development.json` **or** paste the full connection string:
+
+   ```powershell
+   dotnet run --project HealUp.DataExport -- --config ".\HealUp.Api\appsettings.Development.json"
+   ```
 
    ```powershell
    dotnet run --project HealUp.DataExport -- "YOUR_LOCAL_CONNECTION_STRING" healup-data-export.sql
    ```
-
-   Use the same connection string as in `appsettings.Development.json` (local SQL Server / LocalDB).
 
 3. Open **`healup-data-export.sql`** in an editor. It contains `DELETE` statements (in FK-safe order) then `INSERT`s with `IDENTITY_INSERT` so IDs match your local DB.
 

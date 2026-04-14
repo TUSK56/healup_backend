@@ -1,28 +1,54 @@
 using System.Globalization;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 
-if (args.Length < 1)
+const string defaultOutFile = "healup-data-export.sql";
+
+if (args.Length < 1 || args[0] is "-h" or "--help" or "/?")
 {
-    Console.Error.WriteLine("""
-        HealUp.DataExport — writes INSERT T-SQL from your local (or any) SQL Server database.
-
-        Usage:
-          dotnet run --project HealUp.DataExport -- "<LOCAL_CONNECTION_STRING>" [output.sql]
-
-        Example:
-          dotnet run --project HealUp.DataExport -- "Server=TUSK\\SQLEXPRESS;Database=healupproject;Trusted_Connection=True;TrustServerCertificate=True;Encrypt=False;" healup-data.sql
-
-        Then open healup-data.sql, review it, and paste into MonsterASP "Run T-SQL" (may need to split very large files).
-
-        WARNING: This script DELETEs all rows in HealUp tables on the target DB before INSERTing.
-        Only run against the online DB if you intend to replace its data.
-        """);
-    return 1;
+    PrintHelp();
+    return args.Length < 1 ? 1 : 0;
 }
 
-var connectionString = args[0];
-var outPath = args.Length >= 2 ? args[1] : Path.Combine(Directory.GetCurrentDirectory(), "healup-data-export.sql");
+// --show-connection <path-to-appsettings.json>  → print masked connection (no export)
+if (args[0] == "--show-connection" && args.Length >= 2)
+{
+    var path = Path.GetFullPath(args[1]);
+    var cs = ReadConnectionStringFromJsonFile(path);
+    Console.WriteLine($"File: {path}");
+    Console.WriteLine();
+    Console.WriteLine("Connection string (password masked):");
+    Console.WriteLine(MaskConnectionString(cs));
+    return 0;
+}
+
+string connectionString;
+string outPath;
+
+if (args[0] == "--config" && args.Length >= 2)
+{
+    var jsonPath = Path.GetFullPath(args[1]);
+    connectionString = ReadConnectionStringFromJsonFile(jsonPath);
+    outPath = args.Length >= 3 ? args[2]! : Path.Combine(Directory.GetCurrentDirectory(), defaultOutFile);
+    Console.WriteLine($"Using connection from: {jsonPath}");
+    Console.WriteLine($"Target (masked): {MaskConnectionString(connectionString)}");
+    Console.WriteLine();
+}
+else if (File.Exists(args[0]) && args[0].EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+{
+    var jsonPath = Path.GetFullPath(args[0]);
+    connectionString = ReadConnectionStringFromJsonFile(jsonPath);
+    outPath = args.Length >= 2 ? args[1]! : Path.Combine(Directory.GetCurrentDirectory(), defaultOutFile);
+    Console.WriteLine($"Using connection from: {jsonPath}");
+    Console.WriteLine($"Target (masked): {MaskConnectionString(connectionString)}");
+    Console.WriteLine();
+}
+else
+{
+    connectionString = args[0];
+    outPath = args.Length >= 2 ? args[1]! : Path.Combine(Directory.GetCurrentDirectory(), defaultOutFile);
+}
 
 var deleteOrder = new[]
 {
@@ -79,11 +105,75 @@ foreach (var table in insertOrder)
 }
 
 sb.AppendLine("COMMIT TRANSACTION;");
-// Note: do not use GO here — many hosted "Run T-SQL" tools execute one batch only.
 
 await File.WriteAllTextAsync(outPath, sb.ToString(), Encoding.UTF8);
 Console.WriteLine($"Wrote: {outPath} ({new FileInfo(outPath).Length / 1024} KB approx)");
 return 0;
+
+static void PrintHelp()
+{
+    Console.WriteLine(
+        """
+        HealUp.DataExport — writes INSERT T-SQL from a SQL Server database (usually your local DB).
+
+        WHERE IS THE CONNECTION STRING?
+        ───────────────────────────────
+        • Local dev:  HealUp.Api/appsettings.Development.json  →  "ConnectionStrings": { "DefaultConnection": "..." }
+        • Example:    HealUp.Api/appsettings.Development.example.json (copy to Development and edit)
+        • Production: MonsterASP panel / appsettings on the server (do not commit passwords to Git)
+
+        USAGE
+        ─────
+        1) Point at your JSON file (easiest):
+             dotnet run --project HealUp.DataExport -- --config "..\\HealUp.Api\\appsettings.Development.json"
+             dotnet run --project HealUp.DataExport -- "..\\HealUp.Api\\appsettings.Development.json"
+
+        2) Paste the full connection string (same text as in JSON):
+             dotnet run --project HealUp.DataExport -- "Server=...;Database=...;..."  [output.sql]
+
+        3) Only SHOW the connection string from a file (password masked):
+             dotnet run --project HealUp.DataExport -- --show-connection "..\\HealUp.Api\\appsettings.Development.json"
+
+        WARNING: Exported script DELETEs HealUp tables then INSERTs. Only run the .sql on the DB you intend to replace.
+        """);
+}
+
+static string ReadConnectionStringFromJsonFile(string fullPath)
+{
+    if (!File.Exists(fullPath))
+        throw new FileNotFoundException($"JSON file not found: {fullPath}");
+
+    var json = File.ReadAllText(fullPath);
+    using var doc = JsonDocument.Parse(json);
+    if (!doc.RootElement.TryGetProperty("ConnectionStrings", out var cs))
+        throw new InvalidOperationException("Missing 'ConnectionStrings' section in JSON.");
+
+    if (!cs.TryGetProperty("DefaultConnection", out var def))
+        throw new InvalidOperationException("Missing 'ConnectionStrings:DefaultConnection' in JSON.");
+
+    var s = def.GetString();
+    if (string.IsNullOrWhiteSpace(s))
+        throw new InvalidOperationException("'DefaultConnection' is empty.");
+
+    return s;
+}
+
+static string MaskConnectionString(string connectionString)
+{
+    var parts = connectionString.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    return string.Join(
+        "; ",
+        parts.Select(p =>
+        {
+            var eq = p.IndexOf('=');
+            if (eq < 0) return p;
+            var key = p[..eq].Trim();
+            if (key.Equals("Password", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Pwd", StringComparison.OrdinalIgnoreCase))
+                return $"{key}=***";
+            return p;
+        })) + ";";
+}
 
 static async Task AppendTableInsertsAsync(SqlConnection conn, string table, StringBuilder sb)
 {
