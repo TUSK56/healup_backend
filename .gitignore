@@ -20,3 +20,7 @@ publish/
 ## Logs & temp
 *.log
 *.tmp
+
+## Local SQL data dumps (may contain hashes / PII)
+healup-data-export.sql
+**/healup-data-export.sql

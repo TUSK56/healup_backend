@@ -39,3 +39,24 @@ To force a fresh seed, drop or recreate the database (or delete demo users) so t
 ## Admin bootstrap
 
 `AdminSeed` in `appsettings.json` creates the first admin user if missing (see the same frontend README for example credentials).
+
+## Copy local database data to MonsterASP (Run T-SQL)
+
+The hosted database has the **schema** from EF migrations but may be **empty** or out of sync with your dev machine. To generate a script that **replaces** all HealUp table rows with a copy of your local data:
+
+1. Ensure the **API has run migrations** on the online DB at least once (tables exist).
+2. On your PC, from `backend-dotnet`:
+
+   ```powershell
+   dotnet run --project HealUp.DataExport -- "YOUR_LOCAL_CONNECTION_STRING" healup-data-export.sql
+   ```
+
+   Use the same connection string as in `appsettings.Development.json` (local SQL Server / LocalDB).
+
+3. Open **`healup-data-export.sql`** in an editor. It contains `DELETE` statements (in FK-safe order) then `INSERT`s with `IDENTITY_INSERT` so IDs match your local DB.
+
+4. In MonsterASP **Run T-SQL**, paste the script. If the file is **too large** for one paste, split at natural boundaries (e.g. after `COMMIT` is wrong — keep one transaction; instead split into multiple runs: first run DELETEs only, then run INSERTs per table in order, or increase host limits if available).
+
+5. **Warning:** This **wipes** `patients`, `pharmacies`, `orders`, etc. on the **target** database you connect to when you **execute** the script. Always connect the MonsterASP tool to **`db47940`** only and verify the script before running.
+
+The exporter project is **`HealUp.DataExport`** (console, `Microsoft.Data.SqlClient` only — no EF required).
