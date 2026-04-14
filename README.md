@@ -6,6 +6,16 @@
 - For your machine, copy **`HealUp.Api/appsettings.Development.example.json`** to **`HealUp.Api/appsettings.Development.json`** (this file is **gitignored**) and set `ConnectionStrings:DefaultConnection` to your SQL Server instance. ASP.NET Core loads `appsettings.{Environment}.json` over the base file when `ASPNETCORE_ENVIRONMENT` is `Development` (default for `dotnet run`).
 - On **MonsterASP.net** (or any host), set production connection strings and secrets via the host’s configuration or environment variables, and set **`Jwt:Key`** to a long random secret. Add your deployed frontend URL to **`Frontend:Origins`** for CORS.
 
+### MonsterASP SQL Server (hosted database)
+
+The repo includes **`appsettings.Production.example.json`** with the same **server and database name** pattern as MonsterASP (`db47940.databaseasp.net`). Do **not** commit real passwords.
+
+1. **Local publish (recommended):** Copy `appsettings.Production.example.json` to **`appsettings.Production.json`** (this file is **gitignored**), put your real password in `ConnectionStrings:DefaultConnection`, then run `dotnet publish`. The publish output will include your production settings if present on disk.
+2. **Hosting panel only:** Set environment variable **`ConnectionStrings__DefaultConnection`** to your full connection string (MonsterASP often has a “Connection strings” UI). Then you do not need `appsettings.Production.json` on disk.
+3. Ensure **`ASPNETCORE_ENVIRONMENT=Production`** on the server so `appsettings.Production.json` and/or production env vars apply.
+
+If a database password was ever shared in chat or committed by mistake, **rotate it** in the MonsterASP control panel and update your local `appsettings.Production.json` or hosting env vars.
+
 ## Run locally
 
 The API listens on **`http://localhost:8000`** (`Properties/launchSettings.json`, or `Program.cs` default when `ASPNETCORE_URLS` is not set). This matches the frontend default `NEXT_PUBLIC_API_URL=http://localhost:8000`.
