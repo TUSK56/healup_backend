@@ -141,10 +141,12 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// Automatic request expiry every hour
+// Apply EF migrations (creates tables on first run against an empty DB — required for MonsterASP / new servers).
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
+    await db.Database.MigrateAsync();
+
     await db.ExpireOldRequestsAsync();
 
     // Dev/testing admin bootstrap for clean databases.
