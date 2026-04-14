@@ -1,0 +1,21 @@
+## Build outputs
+**/bin/
+**/obj/
+**/out/
+
+## Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## Local / environment-specific config (keep secrets out of git)
+**/appsettings.Development.json
+**/appsettings.Production.json
+**/appsettings.*.local.json
+
+## Logs & temp
+*.log
+*.tmp
