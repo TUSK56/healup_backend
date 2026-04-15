@@ -44,7 +44,9 @@ builder.Services
             ValidateIssuerSigningKey = true,
             ValidIssuer = jwtSection["Issuer"],
             ValidAudience = jwtSection["Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(key)
+            IssuerSigningKey = new SymmetricSecurityKey(key),
+            // Avoid rejecting valid tokens when server/client clocks differ slightly.
+            ClockSkew = TimeSpan.FromMinutes(10),
         };
 
         // Allow JWT auth for SignalR websocket connections
