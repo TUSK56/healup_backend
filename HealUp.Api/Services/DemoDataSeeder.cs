@@ -6,21 +6,36 @@ using Microsoft.Extensions.Configuration;
 namespace HealUp.Api.Services;
 
 /// <summary>
-/// One-time demo data for local development: 5 patients, 5 approved pharmacies, orders for analytics.
+/// One-time demo data: 5 patients, 5 approved pharmacies, orders for analytics (matches local dev).
 /// Skips if <c>patient1@demo.healup.local</c> already exists.
 /// </summary>
 public static class DemoDataSeeder
 {
+    public const string DemoPatient1Email = "patient1@demo.healup.local";
+
+    /// <summary>Startup path: runs only when <c>DemoSeed:Enabled</c> is true.</summary>
     public static async Task SeedAsync(HealUpDbContext db, IConfiguration configuration, CancellationToken ct = default)
     {
         if (!configuration.GetValue("DemoSeed:Enabled", false))
             return;
 
-        if (await db.Patients.AsNoTracking().AnyAsync(p => p.Email == "patient1@demo.healup.local", ct))
-            return;
-
         var password = configuration["DemoSeed:Password"] ?? "Demo@2026";
-        var hash = PasswordHasher.HashPassword(password);
+        await TrySeedDemoDataAsync(db, password, ct);
+    }
+
+    /// <summary>
+    /// Inserts demo rows if not already present. Used by startup (when enabled) or one-time HTTP setup.
+    /// </summary>
+    /// <returns><c>(true, "created")</c> if data was inserted; <c>(false, "already_seeded")</c> if skipped.</returns>
+    public static async Task<(bool Inserted, string Detail)> TrySeedDemoDataAsync(
+        HealUpDbContext db,
+        string demoPassword,
+        CancellationToken ct = default)
+    {
+        if (await db.Patients.AsNoTracking().AnyAsync(p => p.Email == DemoPatient1Email, ct))
+            return (false, "already_seeded");
+
+        var hash = PasswordHasher.HashPassword(demoPassword);
 
         var patientNames = new[]
         {
@@ -109,6 +124,7 @@ public static class DemoDataSeeder
         }
 
         await db.SaveChangesAsync(ct);
+        return (true, "created");
     }
 
     private static async Task AddOrderAsync(

@@ -114,7 +114,7 @@ public class OffersController : ControllerBase
             request.PatientId,
             "new_offer",
             $"HealUp: New offer for request #{request.Id} from {pharmacy.Name}.",
-            "/patient-review-orders",
+            $"/patient-offers?requestId={request.Id}",
             new { request_id = request.Id, response_id = response.Id },
             ct);
 

@@ -29,7 +29,8 @@ public class NotificationService
             PatientId = patientId,
             Type = type,
             Message = message,
-            IsRead = false
+            IsRead = false,
+            TargetRoute = string.IsNullOrWhiteSpace(route) ? null : route.Trim()
         });
 
         await _db.SaveChangesAsync(ct);
@@ -57,7 +58,8 @@ public class NotificationService
             PharmacyId = pharmacyId,
             Type = type,
             Message = message,
-            IsRead = false
+            IsRead = false,
+            TargetRoute = string.IsNullOrWhiteSpace(route) ? null : route.Trim()
         });
 
         await _db.SaveChangesAsync(ct);

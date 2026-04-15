@@ -133,6 +133,7 @@ public class HealUpDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Type).IsRequired().HasMaxLength(64);
             e.Property(x => x.Message).IsRequired().HasMaxLength(1000);
+            e.Property(x => x.TargetRoute).HasMaxLength(512);
         });
     }
 

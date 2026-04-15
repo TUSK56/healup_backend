@@ -213,6 +213,10 @@ public class Notification
     [Required, MaxLength(1000)]
     public string Message { get; set; } = default!;
 
+    /// <summary>Optional deep link (e.g. <c>/patient-order-tracking?id=12</c>). When null, API falls back to type-based routes.</summary>
+    [MaxLength(512)]
+    public string? TargetRoute { get; set; }
+
     public bool IsRead { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

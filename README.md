@@ -36,6 +36,15 @@ Passwords and email addresses for those accounts are documented in the frontend 
 
 To force a fresh seed, drop or recreate the database (or delete demo users) so the marker email is absent on next startup.
 
+### Hosted (MonsterASP): seed without leaving `DemoSeed:Enabled` on
+
+1. In production config, set **`DemoSeed:SetupKey`** to a long random string (12+ characters). Optionally set **`DemoSeed:Password`** to the shared password for the demo accounts (default `Demo@2026`).
+2. Deploy / restart the API.
+3. Send **POST** `https://YOUR-API-HOST/api/setup/seed-demo-data` with header **`X-HealUp-Setup-Key`** equal to your setup key (e.g. curl or Postman). Response JSON reports `inserted: true` when data was created, or `inserted: false` with `detail: "already_seeded"` if it already ran.
+4. Remove **`DemoSeed:SetupKey`** from configuration (or clear it) so the endpoint returns 404 and cannot be called again.
+
+Alternatively, set **`DemoSeed:Enabled`** to **`true`** once on the server and restart; the seed runs at startup if `patient1@demo.healup.local` is missing, then you can set **`Enabled`** back to **`false`** (idempotent on later starts).
+
 ## Admin bootstrap
 
 `AdminSeed` in `appsettings.json` creates the first admin user if missing (see the same frontend README for example credentials).

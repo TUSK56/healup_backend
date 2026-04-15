@@ -212,8 +212,8 @@ public class OrdersController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         var route = string.Equals(order.Status, "confirmed", StringComparison.OrdinalIgnoreCase)
-            ? "/patient-order-confirmation"
-            : "/patient-order-tracking";
+            ? $"/patient-order-confirmation?id={order.Id}"
+            : $"/patient-order-tracking?id={order.Id}";
         var type = string.Equals(order.Status, "confirmed", StringComparison.OrdinalIgnoreCase)
             ? "order_confirmed_by_pharmacy"
             : "order_status_updated";
@@ -277,7 +277,6 @@ public class OrdersController : ControllerBase
         {
             ("pending_pharmacy_confirmation", "confirmed") => true,
             ("pending_pharmacy_confirmation", "rejected") => true,
-            ("confirmed", "preparing") => true,
             ("preparing", "out_for_delivery") => true,
             ("preparing", "ready_for_pickup") => true,
             ("out_for_delivery", "completed") => true,
@@ -305,12 +304,16 @@ public class OrdersController : ControllerBase
         pharmacy = order.Pharmacy is null ? null : new
         {
             id = order.Pharmacy.Id,
-            name = order.Pharmacy.Name
+            name = order.Pharmacy.Name,
+            latitude = order.Pharmacy.Latitude,
+            longitude = order.Pharmacy.Longitude
         },
         patient = order.Patient is null ? null : new
         {
             id = order.Patient.Id,
-            name = order.Patient.Name
+            name = order.Patient.Name,
+            latitude = order.Patient.Latitude,
+            longitude = order.Patient.Longitude
         },
         items = order.Items.Select(i => new
         {

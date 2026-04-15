@@ -187,5 +187,36 @@ app.MapControllers();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
 
+// One-time hosted DB fill (same data as local DemoSeed). Configure DemoSeed:SetupKey (12+ chars), then POST with header X-HealUp-Setup-Key. Remove SetupKey after use.
+app.MapPost(
+        "/api/setup/seed-demo-data",
+        async (HttpContext http, IConfiguration cfg, IServiceProvider services) =>
+        {
+            var setupKey = cfg["DemoSeed:SetupKey"];
+            if (string.IsNullOrWhiteSpace(setupKey) || setupKey.Length < 12)
+                return Results.NotFound();
+
+            if (!http.Request.Headers.TryGetValue("X-HealUp-Setup-Key", out var sent) ||
+                !string.Equals(sent.ToString(), setupKey, StringComparison.Ordinal))
+                return Results.Unauthorized();
+
+            await using var scope = services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
+            var password = cfg["DemoSeed:Password"] ?? "Demo@2026";
+            var (inserted, detail) = await DemoDataSeeder.TrySeedDemoDataAsync(db, password, http.RequestAborted);
+            return Results.Ok(new
+            {
+                inserted,
+                detail,
+                logins = new
+                {
+                    patients = "patient1@demo.healup.local … patient5@demo.healup.local",
+                    pharmacies = "pharmacy1@demo.healup.local … pharmacy5@demo.healup.local",
+                    note = "Password is DemoSeed:Password from server config (see frontend README; default Demo@2026)."
+                }
+            });
+        })
+    .AllowAnonymous();
+
 app.Run();
 

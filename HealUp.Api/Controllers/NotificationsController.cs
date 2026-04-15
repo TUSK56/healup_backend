@@ -53,7 +53,7 @@ public class NotificationsController : ControllerBase
                 message = n.Message,
                 is_read = n.IsRead,
                 created_at = n.CreatedAt,
-                route = ResolveRoute(n.Type, role)
+                route = string.IsNullOrWhiteSpace(n.TargetRoute) ? ResolveRoute(n.Type, role) : n.TargetRoute
             })
         });
     }
@@ -118,6 +118,7 @@ public class NotificationsController : ControllerBase
         {
             "order_confirmed_by_pharmacy" => "/patient-order-confirmation",
             "order_status_updated" => "/patient-order-tracking",
+            "new_offer" => "/patient-review-orders",
             _ => "/patient-review-orders"
         };
     }
