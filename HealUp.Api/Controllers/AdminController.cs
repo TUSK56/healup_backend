@@ -32,6 +32,8 @@ public class AdminController : ControllerBase
                 id = p.Id,
                 name = p.Name,
                 email = p.Email,
+                phone = p.Phone,
+                license_number = p.LicenseNumber,
                 status = p.Status,
                 created_at = p.CreatedAt
             })
@@ -93,6 +95,7 @@ public class AdminController : ControllerBase
                 id = u.Id,
                 name = u.Name,
                 email = u.Email,
+                phone = u.Phone,
                 role = "patient",
                 created_at = u.CreatedAt
             })

@@ -64,6 +64,13 @@ public class PharmacyController : ControllerBase
                     id = req.Id,
                     status = req.Status,
                     expires_at = req.ExpiresAt,
+                    created_at = req.CreatedAt,
+                    prescription_url = req.PrescriptionUrl,
+                    patient = new
+                    {
+                        id = req.Patient.Id,
+                        name = req.Patient.Name
+                    },
                     medicines = req.Medicines.Select(m => new
                     {
                         id = m.Id,

@@ -21,13 +21,18 @@ public class GoogleMapsService
 
         if (!string.IsNullOrWhiteSpace(_apiKey))
         {
-            var url =
-                $"https://maps.googleapis.com/maps/api/distancematrix/json?origins={lat1},{lon1}&destinations={lat2},{lon2}&key={_apiKey}";
-            var response = await _httpClient.GetFromJsonAsync<DistanceMatrixResponse>(url, cancellationToken);
-            var meters = response?.Rows?.FirstOrDefault()?.Elements?.FirstOrDefault()?.Distance?.Value;
-            if (meters.HasValue)
+            try
             {
-                return meters.Value / 1000d;
+                var url =
+                    $"https://maps.googleapis.com/maps/api/distancematrix/json?origins={lat1},{lon1}&destinations={lat2},{lon2}&key={_apiKey}";
+                var response = await _httpClient.GetFromJsonAsync<DistanceMatrixResponse>(url, cancellationToken);
+                var meters = response?.Rows?.FirstOrDefault()?.Elements?.FirstOrDefault()?.Distance?.Value;
+                if (meters.HasValue)
+                    return meters.Value / 1000d;
+            }
+            catch
+            {
+                // Invalid key / quota / network — fall back to straight-line distance.
             }
         }
 
