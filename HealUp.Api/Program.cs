@@ -152,78 +152,107 @@ var app = builder.Build();
 // Apply EF migrations (creates tables on first run against an empty DB — required for MonsterASP / new servers).
 using (var scope = app.Services.CreateScope())
 {
-    var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
     try
     {
-        await db.Database.MigrateAsync();
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"HealUp: database migrate skipped: {ex.Message}");
-    }
+        var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
 
-    // Align DB with model when EF migration wasn't applied yet (avoids failures on POST /api/orders).
-    if ((db.Database.ProviderName ?? "").Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
-    {
         try
         {
-            await db.Database.ExecuteSqlRawAsync(
-                """
-                IF COL_LENGTH(N'dbo.orders', N'PreparingAt') IS NULL
-                  ALTER TABLE dbo.orders ADD PreparingAt datetime2 NULL;
-                IF COL_LENGTH(N'dbo.orders', N'PaymentMethod') IS NULL
-                  ALTER TABLE dbo.orders ADD PaymentMethod nvarchar(256) NULL;
-                ELSE
-                  ALTER TABLE dbo.orders ALTER COLUMN PaymentMethod nvarchar(256) NULL;
-                IF COL_LENGTH(N'dbo.orders', N'DeliveryAddressSnapshot') IS NULL
-                  ALTER TABLE dbo.orders ADD DeliveryAddressSnapshot nvarchar(500) NULL;
-                """);
-
-            await db.Database.ExecuteSqlRawAsync(
-                """
-                IF OBJECT_ID(N'dbo.pharmacy_declined_requests', N'U') IS NULL
-                BEGIN
-                  CREATE TABLE dbo.pharmacy_declined_requests (
-                    Id int NOT NULL IDENTITY(1,1),
-                    PharmacyId int NOT NULL,
-                    RequestId int NOT NULL,
-                    CreatedAt datetime2 NOT NULL,
-                    CONSTRAINT PK_pharmacy_declined_requests PRIMARY KEY (Id),
-                    CONSTRAINT FK_pharmacy_declined_requests_pharmacies_PharmacyId FOREIGN KEY (PharmacyId) REFERENCES dbo.pharmacies (Id) ON DELETE CASCADE,
-                    CONSTRAINT FK_pharmacy_declined_requests_requests_RequestId FOREIGN KEY (RequestId) REFERENCES dbo.requests (Id) ON DELETE CASCADE
-                  );
-                  CREATE UNIQUE INDEX IX_pharmacy_declined_requests_PharmacyId_RequestId ON dbo.pharmacy_declined_requests (PharmacyId, RequestId);
-                END
-                """);
+            await db.Database.MigrateAsync();
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"HealUp: optional schema patch skipped: {ex.Message}");
+            Console.WriteLine($"HealUp: database migrate skipped: {ex.Message}");
         }
-    }
 
-    await db.ExpireOldRequestsAsync();
-
-    // Dev/testing admin bootstrap for clean databases.
-    var adminEmail = configuration["AdminSeed:Email"];
-    var adminPassword = configuration["AdminSeed:Password"];
-    var adminName = configuration["AdminSeed:Name"] ?? "HealUp Admin";
-    if (!string.IsNullOrWhiteSpace(adminEmail) && !string.IsNullOrWhiteSpace(adminPassword))
-    {
-        var exists = await db.Admins.AnyAsync(a => a.Email == adminEmail);
-        if (!exists)
+        // Align DB with model when EF migration wasn't applied yet (avoids failures on POST /api/orders).
+        if ((db.Database.ProviderName ?? "").Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
         {
-            db.Admins.Add(new Admin
+            try
             {
-                Name = adminName,
-                Email = adminEmail,
-                PasswordHash = PasswordHasher.HashPassword(adminPassword)
-            });
-            await db.SaveChangesAsync();
+                await db.Database.ExecuteSqlRawAsync(
+                    """
+                    IF COL_LENGTH(N'dbo.orders', N'PreparingAt') IS NULL
+                      ALTER TABLE dbo.orders ADD PreparingAt datetime2 NULL;
+                    IF COL_LENGTH(N'dbo.orders', N'PaymentMethod') IS NULL
+                      ALTER TABLE dbo.orders ADD PaymentMethod nvarchar(256) NULL;
+                    ELSE
+                      ALTER TABLE dbo.orders ALTER COLUMN PaymentMethod nvarchar(256) NULL;
+                    IF COL_LENGTH(N'dbo.orders', N'DeliveryAddressSnapshot') IS NULL
+                      ALTER TABLE dbo.orders ADD DeliveryAddressSnapshot nvarchar(500) NULL;
+                    """);
+
+                await db.Database.ExecuteSqlRawAsync(
+                    """
+                    IF OBJECT_ID(N'dbo.pharmacy_declined_requests', N'U') IS NULL
+                    BEGIN
+                      CREATE TABLE dbo.pharmacy_declined_requests (
+                        Id int NOT NULL IDENTITY(1,1),
+                        PharmacyId int NOT NULL,
+                        RequestId int NOT NULL,
+                        CreatedAt datetime2 NOT NULL,
+                        CONSTRAINT PK_pharmacy_declined_requests PRIMARY KEY (Id),
+                        CONSTRAINT FK_pharmacy_declined_requests_pharmacies_PharmacyId FOREIGN KEY (PharmacyId) REFERENCES dbo.pharmacies (Id) ON DELETE CASCADE,
+                        CONSTRAINT FK_pharmacy_declined_requests_requests_RequestId FOREIGN KEY (RequestId) REFERENCES dbo.requests (Id) ON DELETE CASCADE
+                      );
+                      CREATE UNIQUE INDEX IX_pharmacy_declined_requests_PharmacyId_RequestId ON dbo.pharmacy_declined_requests (PharmacyId, RequestId);
+                    END
+                    """);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"HealUp: optional schema patch skipped: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            await db.ExpireOldRequestsAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"HealUp: request expiry skipped: {ex.Message}");
+        }
+
+        // Dev/testing admin bootstrap for clean databases.
+        var adminEmail = configuration["AdminSeed:Email"];
+        var adminPassword = configuration["AdminSeed:Password"];
+        var adminName = configuration["AdminSeed:Name"] ?? "HealUp Admin";
+        if (!string.IsNullOrWhiteSpace(adminEmail) && !string.IsNullOrWhiteSpace(adminPassword))
+        {
+            try
+            {
+                var exists = await db.Admins.AnyAsync(a => a.Email == adminEmail);
+                if (!exists)
+                {
+                    db.Admins.Add(new Admin
+                    {
+                        Name = adminName,
+                        Email = adminEmail,
+                        PasswordHash = PasswordHasher.HashPassword(adminPassword)
+                    });
+                    await db.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"HealUp: admin seed skipped: {ex.Message}");
+            }
+        }
+
+        try
+        {
+            await DemoDataSeeder.SeedAsync(db, configuration);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"HealUp: demo seed skipped: {ex.Message}");
         }
     }
-
-    await DemoDataSeeder.SeedAsync(db, configuration);
+    catch (Exception ex)
+    {
+        Console.WriteLine($"HealUp: startup db init skipped: {ex.Message}");
+    }
 }
 
 app.UseSwagger();
