@@ -10,7 +10,7 @@
 
 The repo includes **`appsettings.Production.example.json`** with the same **server and database name** pattern as MonsterASP (`db47940.databaseasp.net`). Do **not** commit real passwords.
 
-1. **Local publish (recommended):** Copy `appsettings.Production.example.json` to **`appsettings.Production.json`** (this file is **gitignored**), put your real password in `ConnectionStrings:DefaultConnection`, then run `dotnet publish`. The publish output will include your production settings if present on disk.
+1. **Local publish (recommended):** Copy `appsettings.Production.example.json` to **`appsettings.Production.json`** (this file is **gitignored**), put your real password in `ConnectionStrings:DefaultConnection`, then run `dotnet publish .\HealUp.Api\HealUp.Api.csproj -c Release -p:PublishProfile=MonsterASP -o .\publish`. The publish output will include your production settings if present on disk.
 2. **Hosting panel only:** Set environment variable **`ConnectionStrings__DefaultConnection`** to your full connection string (MonsterASP often has a “Connection strings” UI). Then you do not need `appsettings.Production.json` on disk.
 3. Ensure **`ASPNETCORE_ENVIRONMENT=Production`** on the server so `appsettings.Production.json` and/or production env vars apply.
 4. On **first deploy**, the API runs **`Database.Migrate()`** at startup so all tables (`requests`, `patients`, etc.) are created automatically. The SQL user must be allowed **DDL** (create/alter tables) at least once; if your host only allows DML, run `dotnet ef database update` from your PC against the hosted connection string instead, then redeploy.

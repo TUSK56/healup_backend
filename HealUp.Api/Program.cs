@@ -153,7 +153,14 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
-    await db.Database.MigrateAsync();
+    try
+    {
+        await db.Database.MigrateAsync();
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"HealUp: database migrate skipped: {ex.Message}");
+    }
 
     // Align DB with model when EF migration wasn't applied yet (avoids failures on POST /api/orders).
     if ((db.Database.ProviderName ?? "").Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
