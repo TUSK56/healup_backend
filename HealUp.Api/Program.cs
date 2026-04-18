@@ -8,8 +8,11 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using QuestPDF.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
+
+QuestPDF.Settings.License = LicenseType.Community;
 
 // When ASPNETCORE_URLS is unset, avoid Kestrel's default http://localhost:5000 (often already in use).
 // `dotnet run` normally sets this from Properties/launchSettings.json to http://127.0.0.1:8000.
@@ -122,6 +125,9 @@ builder.Services.AddSwaggerGen(c =>
         Description = "HealUp Medicine Request Platform – .NET 8 Web API"
     });
 
+    // Nested controller DTOs share short names (e.g. ChangePasswordDto); default schema ids collide and break /swagger/v1/swagger.json.
+    c.CustomSchemaIds(type => type.FullName?.Replace('+', '.') ?? type.Name);
+
     var securityScheme = new OpenApiSecurityScheme
     {
         Name = "Authorization",
@@ -148,6 +154,46 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HealUpDbContext>();
     await db.Database.MigrateAsync();
+
+    // Align DB with model when EF migration wasn't applied yet (avoids failures on POST /api/orders).
+    if ((db.Database.ProviderName ?? "").Contains("SqlServer", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                IF COL_LENGTH(N'dbo.orders', N'PreparingAt') IS NULL
+                  ALTER TABLE dbo.orders ADD PreparingAt datetime2 NULL;
+                IF COL_LENGTH(N'dbo.orders', N'PaymentMethod') IS NULL
+                  ALTER TABLE dbo.orders ADD PaymentMethod nvarchar(256) NULL;
+                ELSE
+                  ALTER TABLE dbo.orders ALTER COLUMN PaymentMethod nvarchar(256) NULL;
+                IF COL_LENGTH(N'dbo.orders', N'DeliveryAddressSnapshot') IS NULL
+                  ALTER TABLE dbo.orders ADD DeliveryAddressSnapshot nvarchar(500) NULL;
+                """);
+
+            await db.Database.ExecuteSqlRawAsync(
+                """
+                IF OBJECT_ID(N'dbo.pharmacy_declined_requests', N'U') IS NULL
+                BEGIN
+                  CREATE TABLE dbo.pharmacy_declined_requests (
+                    Id int NOT NULL IDENTITY(1,1),
+                    PharmacyId int NOT NULL,
+                    RequestId int NOT NULL,
+                    CreatedAt datetime2 NOT NULL,
+                    CONSTRAINT PK_pharmacy_declined_requests PRIMARY KEY (Id),
+                    CONSTRAINT FK_pharmacy_declined_requests_pharmacies_PharmacyId FOREIGN KEY (PharmacyId) REFERENCES dbo.pharmacies (Id) ON DELETE CASCADE,
+                    CONSTRAINT FK_pharmacy_declined_requests_requests_RequestId FOREIGN KEY (RequestId) REFERENCES dbo.requests (Id) ON DELETE CASCADE
+                  );
+                  CREATE UNIQUE INDEX IX_pharmacy_declined_requests_PharmacyId_RequestId ON dbo.pharmacy_declined_requests (PharmacyId, RequestId);
+                END
+                """);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"HealUp: optional schema patch skipped: {ex.Message}");
+        }
+    }
 
     await db.ExpireOldRequestsAsync();
 
@@ -221,4 +267,3 @@ app.MapPost(
     .AllowAnonymous();
 
 app.Run();
-

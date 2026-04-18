@@ -15,6 +15,11 @@ public class Patient
     [MaxLength(50)]
     public string? Phone { get; set; }
 
+    public DateTime? DateOfBirth { get; set; }
+
+    [MaxLength(1000)]
+    public string? AvatarUrl { get; set; }
+
     [Required]
     public string PasswordHash { get; set; } = default!;
 
@@ -25,6 +30,35 @@ public class Patient
 
     public ICollection<MedicineRequest> Requests { get; set; } = new List<MedicineRequest>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public ICollection<PatientAddress> Addresses { get; set; } = new List<PatientAddress>();
+}
+
+public class PatientAddress
+{
+    public int Id { get; set; }
+
+    public int PatientId { get; set; }
+    public Patient Patient { get; set; } = default!;
+
+    [Required, MaxLength(80)]
+    public string Label { get; set; } = default!; // e.g. المنزل
+
+    [Required, MaxLength(32)]
+    public string IconKey { get; set; } = "home"; // home | work | other
+
+    [MaxLength(120)]
+    public string? City { get; set; }
+
+    [MaxLength(120)]
+    public string? District { get; set; }
+
+    [MaxLength(500)]
+    public string? AddressDetails { get; set; }
+
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class Admin
@@ -62,6 +96,18 @@ public class Pharmacy
     [MaxLength(100)]
     public string? LicenseNumber { get; set; }
 
+    [MaxLength(255)]
+    public string? ResponsiblePharmacistName { get; set; }
+
+    [MaxLength(120)]
+    public string? City { get; set; }
+
+    [MaxLength(120)]
+    public string? District { get; set; }
+
+    [MaxLength(500)]
+    public string? AddressDetails { get; set; }
+
     [Required]
     public string PasswordHash { get; set; } = default!;
 
@@ -76,6 +122,7 @@ public class Pharmacy
 
     public ICollection<PharmacyResponse> Responses { get; set; } = new List<PharmacyResponse>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public ICollection<PharmacyDeclinedRequest> DeclinedRequests { get; set; } = new List<PharmacyDeclinedRequest>();
 }
 
 public class MedicineRequest
@@ -88,6 +135,9 @@ public class MedicineRequest
 
     public string? PrescriptionUrl { get; set; }
 
+    [Range(0, double.MaxValue)]
+    public decimal? EstimatedTotal { get; set; }
+
     /// <summary>active | expired | confirmed | cancelled</summary>
     [Required, MaxLength(32)]
     public string Status { get; set; } = "active";
@@ -98,6 +148,7 @@ public class MedicineRequest
     public ICollection<RequestMedicine> Medicines { get; set; } = new List<RequestMedicine>();
     public ICollection<PharmacyResponse> PharmacyResponses { get; set; } = new List<PharmacyResponse>();
     public ICollection<Order> Orders { get; set; } = new List<Order>();
+    public ICollection<PharmacyDeclinedRequest> DeclineRecords { get; set; } = new List<PharmacyDeclinedRequest>();
 }
 
 public class RequestMedicine
@@ -171,13 +222,35 @@ public class Order
     [Range(0, double.MaxValue)]
     public decimal TotalPrice { get; set; }
 
-    /// <summary>waiting_responses | confirmed | preparing | out_for_delivery | ready_for_pickup | completed</summary>
+    /// <summary>pending_pharmacy_confirmation | confirmed | preparing | out_for_delivery | ready_for_pickup | completed | rejected</summary>
     [Required, MaxLength(32)]
     public string Status { get; set; } = "waiting_responses";
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>UTC when patient confirmed and order moved to preparing.</summary>
+    public DateTime? PreparingAt { get; set; }
+
+    [MaxLength(256)]
+    public string? PaymentMethod { get; set; }
+
+    [MaxLength(500)]
+    public string? DeliveryAddressSnapshot { get; set; }
+
     public ICollection<OrderItem> Items { get; set; } = new List<OrderItem>();
+}
+
+public class PharmacyDeclinedRequest
+{
+    public int Id { get; set; }
+
+    public int PharmacyId { get; set; }
+    public Pharmacy Pharmacy { get; set; } = default!;
+
+    public int RequestId { get; set; }
+    public MedicineRequest Request { get; set; } = default!;
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 
 public class OrderItem

@@ -1,0 +1,97 @@
+{
+  "notes": [
+    "Use these payloads in Swagger at /swagger.",
+    "For protected endpoints, first run login and paste Bearer token into Swagger Authorize.",
+    "Keep guard values exactly: user, pharmacy, admin.",
+    "For /api/requests, use multipart/form-data. medicines must be a JSON string."
+  ],
+  "testFlow": [
+    "1) POST /api/register/patient",
+    "2) POST /api/register/pharmacy",
+    "3) POST /api/login (patient)",
+    "4) POST /api/login (pharmacy) -> should be 403 until approved",
+    "5) POST /api/login (admin)",
+    "6) PATCH /api/admin/pharmacies/{id}/approve",
+    "7) POST /api/login (pharmacy) -> should be 200",
+    "8) POST /api/requests",
+    "9) GET /api/pharmacy/requests",
+    "10) POST /api/pharmacy/respond",
+    "11) GET /api/requests/{id}/offers",
+    "12) POST /api/orders",
+    "13) PATCH /api/orders/status"
+  ],
+  "payloads": {
+    "POST /api/register/patient": {
+      "name": "Patient Example",
+      "email": "patient_example@healup.test",
+      "phone": "0100000000",
+      "password": "Pass123!",
+      "passwordConfirmation": "Pass123!",
+      "latitude": 30.0444,
+      "longitude": 31.2357
+    },
+    "POST /api/register/pharmacy": {
+      "name": "Pharmacy Example",
+      "email": "pharmacy_example@healup.test",
+      "phone": "0200000000",
+      "licenseNumber": "LIC-EXAMPLE-001",
+      "password": "Pass123!",
+      "passwordConfirmation": "Pass123!",
+      "latitude": 30.0500,
+      "longitude": 31.2400
+    },
+    "POST /api/login patient": {
+      "email": "patient_example@healup.test",
+      "password": "Pass123!",
+      "guard": "user"
+    },
+    "POST /api/login pharmacy": {
+      "email": "pharmacy_example@healup.test",
+      "password": "Pass123!",
+      "guard": "pharmacy"
+    },
+    "POST /api/login admin": {
+      "email": "admin_example@healup.test",
+      "password": "Pass123!",
+      "guard": "admin"
+    },
+    "POST /api/requests (multipart/form-data)": {
+      "medicines": "[{\"medicine_name\":\"Augmentin\",\"quantity\":2},{\"medicine_name\":\"Panadol\",\"quantity\":1}]",
+      "prescription_url": ""
+    },
+    "POST /api/pharmacy/respond": {
+      "request_id": 1,
+      "delivery_fee": 5,
+      "medicines": [
+        {
+          "medicine_name": "Augmentin",
+          "available": true,
+          "quantity_available": 2,
+          "price": 15.5
+        },
+        {
+          "medicine_name": "Panadol",
+          "available": true,
+          "quantity_available": 1,
+          "price": 8
+        }
+      ]
+    },
+    "POST /api/orders": {
+      "response_id": 1,
+      "delivery": true
+    },
+    "PATCH /api/orders/status": {
+      "order_id": 1,
+      "status": "preparing"
+    }
+  },
+  "statusValues": {
+    "order": [
+      "preparing",
+      "out_for_delivery",
+      "ready_for_pickup",
+      "completed"
+    ]
+  }
+}

@@ -145,6 +145,7 @@ public class AuthController : ControllerBase
             Email = dto.Email,
             Phone = dto.Phone,
             LicenseNumber = dto.LicenseNumber,
+            ResponsiblePharmacistName = dto.Name,
             PasswordHash = PasswordHasher.HashPassword(dto.Password),
             Latitude = dto.Latitude,
             Longitude = dto.Longitude,

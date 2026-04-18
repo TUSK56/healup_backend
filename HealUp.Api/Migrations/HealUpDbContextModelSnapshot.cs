@@ -70,6 +70,10 @@ namespace HealUp.Api.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
 
+                    b.Property<decimal?>("EstimatedTotal")
+                        .HasPrecision(18, 2)
+                        .HasColumnType("decimal(18,2)");
+
                     b.Property<DateTime>("ExpiresAt")
                         .HasColumnType("datetime2");
 
@@ -219,7 +223,14 @@ namespace HealUp.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(1000)
+                        .HasColumnType("nvarchar(1000)");
+
                     b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime?>("DateOfBirth")
                         .HasColumnType("datetime2");
 
                     b.Property<string>("Email")
@@ -254,6 +265,57 @@ namespace HealUp.Api.Migrations
                     b.ToTable("patients", (string)null);
                 });
 
+            modelBuilder.Entity("HealUp.Api.Models.PatientAddress", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AddressDetails")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)")
+                        .HasColumnName("address_details");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("District")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
+                    b.Property<string>("IconKey")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)")
+                        .HasColumnName("icon_key");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("nvarchar(80)");
+
+                    b.Property<double?>("Latitude")
+                        .HasColumnType("float");
+
+                    b.Property<double?>("Longitude")
+                        .HasColumnType("float");
+
+                    b.Property<int>("PatientId")
+                        .HasColumnType("int");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PatientId");
+
+                    b.ToTable("patient_addresses", (string)null);
+                });
+
             modelBuilder.Entity("HealUp.Api.Models.Pharmacy", b =>
                 {
                     b.Property<int>("Id")
@@ -262,8 +324,20 @@ namespace HealUp.Api.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AddressDetails")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("City")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");
+
+                    b.Property<string>("District")
+                        .HasMaxLength(120)
+                        .HasColumnType("nvarchar(120)");
 
                     b.Property<string>("Email")
                         .IsRequired()
@@ -292,6 +366,10 @@ namespace HealUp.Api.Migrations
                     b.Property<string>("Phone")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
+
+                    b.Property<string>("ResponsiblePharmacistName")
+                        .HasMaxLength(255)
+                        .HasColumnType("nvarchar(255)");
 
                     b.Property<string>("Status")
                         .IsRequired()
@@ -459,6 +537,17 @@ namespace HealUp.Api.Migrations
                     b.Navigation("Order");
                 });
 
+            modelBuilder.Entity("HealUp.Api.Models.PatientAddress", b =>
+                {
+                    b.HasOne("HealUp.Api.Models.Patient", "Patient")
+                        .WithMany("Addresses")
+                        .HasForeignKey("PatientId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Patient");
+                });
+
             modelBuilder.Entity("HealUp.Api.Models.PharmacyResponse", b =>
                 {
                     b.HasOne("HealUp.Api.Models.Pharmacy", "Pharmacy")
@@ -516,6 +605,8 @@ namespace HealUp.Api.Migrations
 
             modelBuilder.Entity("HealUp.Api.Models.Patient", b =>
                 {
+                    b.Navigation("Addresses");
+
                     b.Navigation("Orders");
 
                     b.Navigation("Requests");

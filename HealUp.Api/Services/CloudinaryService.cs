@@ -43,5 +43,36 @@ public class CloudinaryService
 
         return result.SecureUrl?.ToString() ?? result.Url?.ToString() ?? string.Empty;
     }
+
+    public async Task<string> UploadImageAsync(IFormFile file, string folder, CancellationToken cancellationToken = default)
+    {
+        var cloudName = _configuration["Cloudinary:CloudName"];
+        var apiKey = _configuration["Cloudinary:ApiKey"];
+        var apiSecret = _configuration["Cloudinary:ApiSecret"];
+
+        if (string.IsNullOrWhiteSpace(cloudName) || string.IsNullOrWhiteSpace(apiKey) || string.IsNullOrWhiteSpace(apiSecret))
+        {
+            throw new InvalidOperationException("HealUp: Cloudinary is not configured.");
+        }
+
+        var account = new Account(cloudName, apiKey, apiSecret);
+        var cloudinary = new Cloudinary(account) { Api = { Secure = true } };
+
+        await using var stream = file.OpenReadStream();
+
+        var uploadParams = new ImageUploadParams
+        {
+            File = new FileDescription(file.FileName, stream),
+            Folder = folder
+        };
+
+        var result = await cloudinary.UploadAsync(uploadParams, cancellationToken);
+        if (result.Error != null)
+        {
+            throw new InvalidOperationException($"HealUp: Cloudinary upload failed - {result.Error.Message}");
+        }
+
+        return result.SecureUrl?.ToString() ?? result.Url?.ToString() ?? string.Empty;
+    }
 }
 

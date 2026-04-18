@@ -53,6 +53,9 @@ public class RequestsController : ControllerBase
 
         [FromForm(Name = "medicines")]
         public string Medicines { get; set; } = "[]";
+
+        [FromForm(Name = "estimated_total")]
+        public decimal? EstimatedTotal { get; set; }
     }
 
     [HttpPost]
@@ -74,9 +77,6 @@ public class RequestsController : ControllerBase
 
         medicines ??= new List<MedicineInputDto>();
         medicines = medicines.Where(m => !string.IsNullOrWhiteSpace(m.MedicineName)).ToList();
-        if (medicines.Count == 0)
-            return BadRequest(new { message = "HealUp: Add at least one medicine." });
-
         if (medicines.Any(m => m.Quantity < 1))
             return BadRequest(new { message = "HealUp: Medicine quantity must be at least 1." });
 
@@ -86,10 +86,15 @@ public class RequestsController : ControllerBase
             prescriptionUrl = await _cloudinary.UploadPrescriptionAsync(form.Prescription, ct);
         }
 
+        var hasPrescription = !string.IsNullOrWhiteSpace(prescriptionUrl);
+        if (medicines.Count == 0 && !hasPrescription)
+            return BadRequest(new { message = "HealUp: Add at least one medicine or prescription." });
+
         var request = new MedicineRequest
         {
             PatientId = patientId.Value,
             PrescriptionUrl = prescriptionUrl,
+            EstimatedTotal = form.EstimatedTotal,
             Status = "active",
             ExpiresAt = DateTime.UtcNow.AddHours(24),
             Medicines = medicines.Select(m => new RequestMedicine
@@ -145,7 +150,88 @@ public class RequestsController : ControllerBase
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(ct);
 
-        return Ok(new { data = data.Select(ToRequestDto) });
+        var ids = data.Select(r => r.Id).ToList();
+        var latestOffers = await _db.PharmacyResponses
+            .AsNoTracking()
+            .Where(r => ids.Contains(r.RequestId))
+            .GroupBy(r => r.RequestId)
+            .Select(g => new { request_id = g.Key, latest_response_id = g.OrderByDescending(x => x.CreatedAt).Select(x => x.Id).FirstOrDefault() })
+            .ToListAsync(ct);
+
+        var latestMap = latestOffers.ToDictionary(x => x.request_id, x => x.latest_response_id);
+
+        var latestResponseIds = latestOffers
+            .Select(x => x.latest_response_id)
+            .Where(id => id > 0)
+            .Distinct()
+            .ToList();
+
+        var latestResponses = await _db.PharmacyResponses
+            .AsNoTracking()
+            .Where(pr => latestResponseIds.Contains(pr.Id))
+            .Include(pr => pr.Medicines)
+            .Include(pr => pr.Pharmacy)
+            .ToListAsync(ct);
+
+        var respById = latestResponses.ToDictionary(pr => pr.Id);
+
+        return Ok(new
+        {
+            data = data.Select(r =>
+            {
+                var pharmacyLabel = "بانتظار اختيار الصيدلية";
+                decimal? latestOfferGrandTotal = null;
+                var usesLatestOfferPricing = false;
+
+                if (latestMap.TryGetValue(r.Id, out var respId) && respId > 0 && respById.TryGetValue(respId, out var pr))
+                {
+                    pharmacyLabel = string.IsNullOrWhiteSpace(pr.Pharmacy?.Name) ? pharmacyLabel : pr.Pharmacy.Name.Trim();
+                    decimal medSum = 0;
+                    var anyPriced = false;
+                    foreach (var reqm in r.Medicines)
+                    {
+                        var rm = pr.Medicines.FirstOrDefault(x =>
+                            string.Equals(x.MedicineName, reqm.MedicineName, StringComparison.OrdinalIgnoreCase));
+                        if (rm is { Available: true, Price: > 0 })
+                        {
+                            medSum += rm.Price * reqm.Quantity;
+                            anyPriced = true;
+                        }
+                    }
+
+                    var qtySum = r.Medicines.Sum(m => (decimal)m.Quantity);
+                    if (anyPriced && qtySum > 0)
+                    {
+                        var del = qtySum >= 5 ? 0m : 25m;
+                        var vat = Math.Round(medSum * 0.15m, 2, MidpointRounding.AwayFromZero);
+                        latestOfferGrandTotal = medSum + del + vat;
+                        usesLatestOfferPricing = true;
+                    }
+                }
+
+                return new
+                {
+                    id = r.Id,
+                    patient_id = r.PatientId,
+                    prescription_url = r.PrescriptionUrl,
+                    estimated_total = r.EstimatedTotal,
+                    status = r.Status,
+                    expires_at = r.ExpiresAt,
+                    created_at = r.CreatedAt,
+                    has_offers = latestMap.ContainsKey(r.Id) && latestMap[r.Id] > 0,
+                    latest_offer_response_id = latestMap.TryGetValue(r.Id, out var rid) && rid > 0 ? rid : (int?)null,
+                    latest_pharmacy_name = pharmacyLabel,
+                    latest_offer_grand_total = latestOfferGrandTotal,
+                    uses_latest_offer_pricing = usesLatestOfferPricing,
+                    medicines = r.Medicines.Select(m => new
+                    {
+                        id = m.Id,
+                        medicine_name = m.MedicineName,
+                        quantity = m.Quantity
+                    })
+                };
+            })
+        });
     }
 
     [HttpGet("{id:int}")]
@@ -204,6 +290,7 @@ public class RequestsController : ControllerBase
         id = request.Id,
         patient_id = request.PatientId,
         prescription_url = request.PrescriptionUrl,
+        estimated_total = request.EstimatedTotal,
         status = request.Status,
         expires_at = request.ExpiresAt,
         created_at = request.CreatedAt,

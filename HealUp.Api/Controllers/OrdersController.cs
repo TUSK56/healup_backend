@@ -32,6 +32,14 @@ public class OrdersController : ControllerBase
 
         [JsonPropertyName("delivery")]
         public bool Delivery { get; set; } = true;
+
+        [JsonPropertyName("payment_method")]
+        [MaxLength(256)]
+        public string? PaymentMethod { get; set; }
+
+        [JsonPropertyName("delivery_address")]
+        [MaxLength(500)]
+        public string? DeliveryAddress { get; set; }
     }
 
     public class UpdateOrderStatusDto
@@ -55,6 +63,7 @@ public class OrdersController : ControllerBase
 
         var response = await _db.PharmacyResponses
             .Include(r => r.Request)
+                .ThenInclude(req => req.Medicines)
             .Include(r => r.Pharmacy)
             .Include(r => r.Medicines)
             .SingleOrDefaultAsync(r => r.Id == dto.ResponseId, ct);
@@ -75,15 +84,27 @@ public class OrdersController : ControllerBase
         if (selectedMedicines.Count == 0)
             return BadRequest(new { message = "HealUp: Selected offer has no available medicines." });
 
-        var items = selectedMedicines.Select(m => new OrderItem
+        var items = selectedMedicines.Select(m =>
         {
-            MedicineName = m.MedicineName,
-            Quantity = m.QuantityAvailable,
-            Price = m.Price
+            var requestedQty = response.Request.Medicines
+                .Where(reqMed => string.Equals(reqMed.MedicineName, m.MedicineName, StringComparison.OrdinalIgnoreCase))
+                .Select(reqMed => reqMed.Quantity)
+                .FirstOrDefault();
+
+            return new OrderItem
+            {
+                MedicineName = m.MedicineName,
+                Quantity = requestedQty > 0 ? requestedQty : 1,
+                Price = m.Price
+            };
         }).ToList();
 
         var subtotal = items.Sum(i => i.Price * i.Quantity);
-        var deliveryFee = dto.Delivery ? response.DeliveryFee : 0;
+        var qtySum = items.Sum(i => i.Quantity);
+        // Match patient cart / checkout: home delivery fee is 25 EGP when fewer than 5 units; free from 5+.
+        var deliveryFee = dto.Delivery ? (qtySum >= 5 ? 0m : 25m) : 0m;
+        var vat = Math.Round(subtotal * 0.15m, 2, MidpointRounding.AwayFromZero);
+        var totalPrice = subtotal + deliveryFee + vat;
 
         var order = new Order
         {
@@ -92,9 +113,11 @@ public class OrdersController : ControllerBase
             RequestId = response.RequestId,
             Delivery = dto.Delivery,
             DeliveryFee = deliveryFee,
-            TotalPrice = subtotal + deliveryFee,
+            TotalPrice = totalPrice,
             Status = "pending_pharmacy_confirmation",
-            Items = items
+            Items = items,
+            PaymentMethod = string.IsNullOrWhiteSpace(dto.PaymentMethod) ? null : dto.PaymentMethod.Trim(),
+            DeliveryAddressSnapshot = string.IsNullOrWhiteSpace(dto.DeliveryAddress) ? null : dto.DeliveryAddress.Trim()
         };
 
         response.Request.Status = "confirmed";
@@ -208,7 +231,18 @@ public class OrdersController : ControllerBase
         if (!IsValidPharmacyTransition(order.Status, dto.Status))
             return BadRequest(new { message = "HealUp: Invalid order status transition." });
 
+        var prev = order.Status;
         order.Status = dto.Status;
+        var nextLower = (dto.Status ?? "").Trim().ToLowerInvariant();
+        if ((string.Equals(prev, "pending_pharmacy_confirmation", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(prev, "confirmed", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(prev, "preparing", StringComparison.OrdinalIgnoreCase))
+            && nextLower is "out_for_delivery" or "ready_for_pickup"
+            && order.PreparingAt is null)
+        {
+            order.PreparingAt = DateTime.UtcNow;
+        }
+
         await _db.SaveChangesAsync(ct);
 
         var route = string.Equals(order.Status, "confirmed", StringComparison.OrdinalIgnoreCase)
@@ -249,6 +283,7 @@ public class OrdersController : ControllerBase
             return BadRequest(new { message = "HealUp: Order is not ready for patient confirmation." });
 
         order.Status = "preparing";
+        order.PreparingAt = DateTime.UtcNow;
         await _db.SaveChangesAsync(ct);
 
         await _notifications.NotifyPharmacyAsync(
@@ -266,6 +301,45 @@ public class OrdersController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Patient marks delivery/pickup as finished (e.g. after courier simulation reaches destination).
+    /// </summary>
+    [HttpPatch("{orderId:int}/patient-mark-delivered")]
+    [Authorize(Roles = "patient")]
+    public async Task<IActionResult> PatientMarkDelivered([FromRoute] int orderId, CancellationToken ct)
+    {
+        var patientId = GetCurrentEntityId();
+        if (patientId is null)
+            return Unauthorized(new { message = "HealUp: Invalid token subject." });
+
+        var order = await _db.Orders
+            .SingleOrDefaultAsync(o => o.Id == orderId && o.PatientId == patientId.Value, ct);
+        if (order is null)
+            return NotFound(new { message = "HealUp: Order not found." });
+
+        var s = (order.Status ?? "").Trim().ToLowerInvariant();
+        if (s is not ("out_for_delivery" or "ready_for_pickup"))
+            return BadRequest(new { message = "HealUp: Order is not out for delivery or ready for pickup." });
+
+        order.Status = "completed";
+        await _db.SaveChangesAsync(ct);
+
+        await _notifications.NotifyPharmacyAsync(
+            order.PharmacyId,
+            "order_completed",
+            $"HealUp: Order #{order.Id} was marked as delivered by the patient.",
+            "/pharmacy-dashboard/current-orders",
+            new { order_id = order.Id, status = order.Status },
+            ct);
+
+        var hydrated = await QueryOrders().AsNoTracking().SingleAsync(o => o.Id == order.Id, ct);
+        return Ok(new
+        {
+            message = "HealUp: Order marked as completed.",
+            order = ToOrderDto(hydrated)
+        });
+    }
+
     private static bool IsValidPharmacyTransition(string currentStatus, string nextStatus)
     {
         if (string.IsNullOrWhiteSpace(nextStatus))
@@ -277,6 +351,12 @@ public class OrdersController : ControllerBase
         {
             ("pending_pharmacy_confirmation", "confirmed") => true,
             ("pending_pharmacy_confirmation", "rejected") => true,
+            ("pending_pharmacy_confirmation", "preparing") => true,
+            ("pending_pharmacy_confirmation", "out_for_delivery") => true,
+            ("pending_pharmacy_confirmation", "ready_for_pickup") => true,
+            ("confirmed", "preparing") => true,
+            ("confirmed", "out_for_delivery") => true,
+            ("confirmed", "ready_for_pickup") => true,
             ("preparing", "out_for_delivery") => true,
             ("preparing", "ready_for_pickup") => true,
             ("out_for_delivery", "completed") => true,
@@ -301,10 +381,16 @@ public class OrdersController : ControllerBase
         total_price = order.TotalPrice,
         status = order.Status,
         created_at = order.CreatedAt,
+        preparing_at = order.PreparingAt,
+        payment_method = order.PaymentMethod,
+        delivery_address_snapshot = order.DeliveryAddressSnapshot,
         pharmacy = order.Pharmacy is null ? null : new
         {
             id = order.Pharmacy.Id,
             name = order.Pharmacy.Name,
+            city = order.Pharmacy.City,
+            district = order.Pharmacy.District,
+            address_details = order.Pharmacy.AddressDetails,
             latitude = order.Pharmacy.Latitude,
             longitude = order.Pharmacy.Longitude
         },
@@ -312,6 +398,7 @@ public class OrdersController : ControllerBase
         {
             id = order.Patient.Id,
             name = order.Patient.Name,
+            phone = order.Patient.Phone,
             latitude = order.Patient.Latitude,
             longitude = order.Patient.Longitude
         },

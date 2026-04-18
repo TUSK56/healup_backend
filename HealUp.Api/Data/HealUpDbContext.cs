@@ -19,6 +19,8 @@ public class HealUpDbContext : DbContext
     public DbSet<Order> Orders => Set<Order>();
     public DbSet<OrderItem> OrderItems => Set<OrderItem>();
     public DbSet<Notification> Notifications => Set<Notification>();
+    public DbSet<PatientAddress> PatientAddresses => Set<PatientAddress>();
+    public DbSet<PharmacyDeclinedRequest> PharmacyDeclinedRequests => Set<PharmacyDeclinedRequest>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -30,6 +32,8 @@ public class HealUpDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).IsRequired().HasMaxLength(255);
             e.Property(x => x.Email).IsRequired().HasMaxLength(255);
+            e.Property(x => x.Phone).HasMaxLength(50);
+            e.Property(x => x.AvatarUrl).HasMaxLength(1000);
             e.HasIndex(x => x.Email).IsUnique();
         });
 
@@ -48,6 +52,12 @@ public class HealUpDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Name).IsRequired().HasMaxLength(255);
             e.Property(x => x.Email).IsRequired().HasMaxLength(255);
+            e.Property(x => x.Phone).HasMaxLength(50);
+            e.Property(x => x.LicenseNumber).HasMaxLength(100);
+            e.Property(x => x.ResponsiblePharmacistName).HasMaxLength(255);
+            e.Property(x => x.City).HasMaxLength(120);
+            e.Property(x => x.District).HasMaxLength(120);
+            e.Property(x => x.AddressDetails).HasMaxLength(500);
             e.HasIndex(x => x.Email).IsUnique();
             e.Property(x => x.Status).IsRequired().HasMaxLength(32);
         });
@@ -58,6 +68,7 @@ public class HealUpDbContext : DbContext
             e.HasKey(x => x.Id);
             e.Property(x => x.Status).IsRequired().HasMaxLength(32);
             e.Property(x => x.ExpiresAt).IsRequired();
+            e.Property(x => x.EstimatedTotal).HasPrecision(18, 2);
             e.HasOne(x => x.Patient)
                 .WithMany(x => x.Requests)
                 .HasForeignKey(x => x.PatientId);
@@ -114,6 +125,23 @@ public class HealUpDbContext : DbContext
                 .WithMany(x => x.Orders)
                 .HasForeignKey(x => x.RequestId)
                 .OnDelete(DeleteBehavior.NoAction);
+            e.Property(x => x.PaymentMethod).HasMaxLength(256);
+            e.Property(x => x.DeliveryAddressSnapshot).HasMaxLength(500);
+        });
+
+        modelBuilder.Entity<PharmacyDeclinedRequest>(e =>
+        {
+            e.ToTable("pharmacy_declined_requests");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.PharmacyId, x.RequestId }).IsUnique();
+            e.HasOne(x => x.Pharmacy)
+                .WithMany(x => x.DeclinedRequests)
+                .HasForeignKey(x => x.PharmacyId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(x => x.Request)
+                .WithMany(x => x.DeclineRecords)
+                .HasForeignKey(x => x.RequestId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<OrderItem>(e =>
@@ -134,6 +162,21 @@ public class HealUpDbContext : DbContext
             e.Property(x => x.Type).IsRequired().HasMaxLength(64);
             e.Property(x => x.Message).IsRequired().HasMaxLength(1000);
             e.Property(x => x.TargetRoute).HasMaxLength(512);
+        });
+
+        modelBuilder.Entity<PatientAddress>(e =>
+        {
+            e.ToTable("patient_addresses");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Label).IsRequired().HasMaxLength(80);
+            // DB uses snake_case for these two (common with hand-written / older scripts); map explicitly so SELECT/INSERT match.
+            e.Property(x => x.IconKey).IsRequired().HasMaxLength(32).HasColumnName("icon_key");
+            e.Property(x => x.City).HasMaxLength(120);
+            e.Property(x => x.District).HasMaxLength(120);
+            e.Property(x => x.AddressDetails).HasMaxLength(500).HasColumnName("address_details");
+            e.HasOne(x => x.Patient)
+                .WithMany(x => x.Addresses)
+                .HasForeignKey(x => x.PatientId);
         });
     }
 

@@ -89,8 +89,9 @@ public class OffersController : ControllerBase
         if (exists)
             return Conflict(new { message = "HealUp: You already responded to this request." });
 
+        var requestHasPrescription = !string.IsNullOrWhiteSpace(request.PrescriptionUrl);
         var knownMedicines = request.Medicines.Select(m => m.MedicineName.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (dto.Medicines.Any(m => !knownMedicines.Contains(m.MedicineName.Trim())))
+        if (!requestHasPrescription && knownMedicines.Count > 0 && dto.Medicines.Any(m => !knownMedicines.Contains(m.MedicineName.Trim())))
             return BadRequest(new { message = "HealUp: Response includes a medicine not present in the request." });
 
         var response = new PharmacyResponse
@@ -143,6 +144,7 @@ public class OffersController : ControllerBase
         var request = await _db.Requests
             .AsNoTracking()
             .Include(r => r.Patient)
+            .Include(r => r.Medicines)
             .SingleOrDefaultAsync(r => r.Id == requestId && r.PatientId == patientId.Value, ct);
 
         if (request is null)
@@ -179,6 +181,10 @@ public class OffersController : ControllerBase
                     {
                         id = response.Pharmacy.Id,
                         name = response.Pharmacy.Name,
+                        phone = response.Pharmacy.Phone,
+                        city = response.Pharmacy.City,
+                        district = response.Pharmacy.District,
+                        address_details = response.Pharmacy.AddressDetails,
                         latitude = response.Pharmacy.Latitude,
                         longitude = response.Pharmacy.Longitude
                     },
@@ -209,7 +215,14 @@ public class OffersController : ControllerBase
                 status = request.Status,
                 expires_at = request.ExpiresAt,
                 created_at = request.CreatedAt,
-                prescription_url = request.PrescriptionUrl
+                prescription_url = request.PrescriptionUrl,
+                estimated_total = request.EstimatedTotal,
+                medicines = request.Medicines.Select(m => new
+                {
+                    id = m.Id,
+                    medicine_name = m.MedicineName,
+                    quantity = m.Quantity
+                })
             },
             offers = sortedOffers
         });
