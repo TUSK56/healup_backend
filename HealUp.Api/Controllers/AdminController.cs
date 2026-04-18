@@ -34,6 +34,9 @@ public class AdminController : ControllerBase
                 email = p.Email,
                 phone = p.Phone,
                 license_number = p.LicenseNumber,
+                city = p.City,
+                district = p.District,
+                address_details = p.AddressDetails,
                 status = p.Status,
                 created_at = p.CreatedAt
             })

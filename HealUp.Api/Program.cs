@@ -14,18 +14,30 @@ var builder = WebApplication.CreateBuilder(args);
 
 QuestPDF.Settings.License = LicenseType.Community;
 
-// When ASPNETCORE_URLS is unset, avoid Kestrel's default http://localhost:5000 (often already in use).
-// `dotnet run` normally sets this from Properties/launchSettings.json to http://127.0.0.1:8000.
-if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")))
+// For local development only: when no URL is configured, use a stable local port.
+// In IIS/ANCM hosting (e.g., MonsterASP), do not force UseUrls because ANCM manages the port.
+var hasAspNetCorePort = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_PORT"));
+if (builder.Environment.IsDevelopment()
+    && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
+    && !hasAspNetCorePort)
 {
-    builder.WebHost.UseUrls("http://127.0.0.1:8000");
+    builder.WebHost.UseUrls("http://127.0.0.1:5000");
 }
 
 var configuration = builder.Configuration;
 
 // Database (SQL Server)
 builder.Services.AddDbContext<HealUpDbContext>(options =>
-    options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlServer(
+        configuration.GetConnectionString("DefaultConnection"),
+        sql =>
+        {
+            sql.EnableRetryOnFailure(
+                maxRetryCount: 5,
+                maxRetryDelay: TimeSpan.FromSeconds(5),
+                errorNumbersToAdd: null);
+            sql.CommandTimeout(30);
+        }));
 
 // JWT
 var jwtSection = configuration.GetSection("Jwt");
@@ -270,6 +282,19 @@ app.UseAuthorization();
 app.MapControllers();
 
 app.MapHub<NotificationHub>("/hubs/notifications");
+
+app.MapGet("/", () => Results.Ok(new
+{
+    app = "HealUp.Api",
+    status = "running",
+    environment = app.Environment.EnvironmentName
+})).AllowAnonymous();
+
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    timeUtc = DateTime.UtcNow
+})).AllowAnonymous();
 
 // One-time hosted DB fill (same data as local DemoSeed). Configure DemoSeed:SetupKey (12+ chars), then POST with header X-HealUp-Setup-Key. Remove SetupKey after use.
 app.MapPost(

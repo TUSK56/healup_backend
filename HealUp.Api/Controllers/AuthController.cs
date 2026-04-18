@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations;
 using HealUp.Api.Data;
 using HealUp.Api.Models;
 using HealUp.Api.Services;
+using Microsoft.Data.SqlClient;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -56,6 +57,18 @@ public class AuthController : ControllerBase
 
         [MaxLength(100)]
         public string? LicenseNumber { get; set; }
+
+        [MaxLength(255)]
+        public string? ResponsiblePharmacistName { get; set; }
+
+        [MaxLength(120)]
+        public string? City { get; set; }
+
+        [MaxLength(120)]
+        public string? District { get; set; }
+
+        [MaxLength(500)]
+        public string? AddressDetails { get; set; }
 
         [Required, MinLength(6)]
         public string Password { get; set; } = string.Empty;
@@ -145,7 +158,10 @@ public class AuthController : ControllerBase
             Email = dto.Email,
             Phone = dto.Phone,
             LicenseNumber = dto.LicenseNumber,
-            ResponsiblePharmacistName = dto.Name,
+            ResponsiblePharmacistName = string.IsNullOrWhiteSpace(dto.ResponsiblePharmacistName) ? dto.Name : dto.ResponsiblePharmacistName,
+            City = dto.City,
+            District = dto.District,
+            AddressDetails = dto.AddressDetails,
             PasswordHash = PasswordHasher.HashPassword(dto.Password),
             Latitude = dto.Latitude,
             Longitude = dto.Longitude,
@@ -169,53 +185,71 @@ public class AuthController : ControllerBase
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginDto dto, CancellationToken ct)
     {
-        if (dto.Guard == "pharmacy")
+        try
         {
-            var pharmacy = await _db.Pharmacies.SingleOrDefaultAsync(p => p.Email == dto.Email, ct);
-            if (pharmacy is null || !PasswordHasher.VerifyPassword(dto.Password, pharmacy.PasswordHash))
+            if (dto.Guard == "pharmacy")
+            {
+                var pharmacy = await _db.Pharmacies.SingleOrDefaultAsync(p => p.Email == dto.Email, ct);
+                if (pharmacy is null || !PasswordHasher.VerifyPassword(dto.Password, pharmacy.PasswordHash))
+                    return Unauthorized(new { message = "HealUp: Invalid credentials." });
+
+                if (pharmacy.Status != "approved")
+                    return StatusCode(403, new { message = "HealUp: Your pharmacy account is pending approval." });
+
+                var token = _jwt.GenerateForPharmacy(pharmacy);
+                return Ok(new
+                {
+                    message = "Welcome back to HealUp.",
+                    pharmacy = new { pharmacy.Id, pharmacy.Name, pharmacy.Email, pharmacy.Status },
+                    token,
+                    token_type = "bearer"
+                });
+            }
+
+            if (dto.Guard == "admin")
+            {
+                var admin = await _db.Admins.SingleOrDefaultAsync(a => a.Email == dto.Email, ct);
+                if (admin is null || !PasswordHasher.VerifyPassword(dto.Password, admin.PasswordHash))
+                    return Unauthorized(new { message = "HealUp: Invalid credentials." });
+
+                var tokenAdmin = _jwt.GenerateForAdmin(admin);
+                return Ok(new
+                {
+                    message = "Welcome back to HealUp.",
+                    user = new { admin.Id, admin.Name, admin.Email, role = "admin" },
+                    token = tokenAdmin,
+                    token_type = "bearer"
+                });
+            }
+
+            var patientUser = await _db.Patients.SingleOrDefaultAsync(u => u.Email == dto.Email, ct);
+            if (patientUser is null || !PasswordHasher.VerifyPassword(dto.Password, patientUser.PasswordHash))
                 return Unauthorized(new { message = "HealUp: Invalid credentials." });
 
-            if (pharmacy.Status != "approved")
-                return StatusCode(403, new { message = "HealUp: Your pharmacy account is pending approval." });
-
-            var token = _jwt.GenerateForPharmacy(pharmacy);
+            var tokenUser = _jwt.GenerateForPatient(patientUser);
             return Ok(new
             {
                 message = "Welcome back to HealUp.",
-                pharmacy = new { pharmacy.Id, pharmacy.Name, pharmacy.Email, pharmacy.Status },
-                token,
+                user = new { patientUser.Id, patientUser.Name, patientUser.Email, role = "patient" },
+                token = tokenUser,
                 token_type = "bearer"
             });
         }
-
-        if (dto.Guard == "admin")
+        catch (SqlException)
         {
-            var admin = await _db.Admins.SingleOrDefaultAsync(a => a.Email == dto.Email, ct);
-            if (admin is null || !PasswordHasher.VerifyPassword(dto.Password, admin.PasswordHash))
-                return Unauthorized(new { message = "HealUp: Invalid credentials." });
-
-            var tokenAdmin = _jwt.GenerateForAdmin(admin);
-            return Ok(new
+            return StatusCode(503, new
             {
-                message = "Welcome back to HealUp.",
-                user = new { admin.Id, admin.Name, admin.Email, role = "admin" },
-                token = tokenAdmin,
-                token_type = "bearer"
+                message = "HealUp: Database is temporarily unavailable. Please try again in a moment."
             });
         }
-
-        var patientUser = await _db.Patients.SingleOrDefaultAsync(u => u.Email == dto.Email, ct);
-        if (patientUser is null || !PasswordHasher.VerifyPassword(dto.Password, patientUser.PasswordHash))
-            return Unauthorized(new { message = "HealUp: Invalid credentials." });
-
-        var tokenUser = _jwt.GenerateForPatient(patientUser);
-        return Ok(new
+        catch (InvalidOperationException ex) when (ex.Message.Contains("transient failure", StringComparison.OrdinalIgnoreCase)
+                                                   || ex.Message.Contains("instance failure", StringComparison.OrdinalIgnoreCase))
         {
-            message = "Welcome back to HealUp.",
-            user = new { patientUser.Id, patientUser.Name, patientUser.Email, role = "patient" },
-            token = tokenUser,
-            token_type = "bearer"
-        });
+            return StatusCode(503, new
+            {
+                message = "HealUp: Database is temporarily unavailable. Please try again in a moment."
+            });
+        }
     }
 
     [HttpPost("otp/send")]
