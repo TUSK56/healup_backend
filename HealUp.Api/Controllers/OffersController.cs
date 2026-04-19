@@ -103,7 +103,8 @@ public class OffersController : ControllerBase
             {
                 MedicineName = m.MedicineName.Trim(),
                 Available = m.Available,
-                QuantityAvailable = m.QuantityAvailable,
+                // Offers use unit pricing: one piece price, patient quantity is applied later at order creation.
+                QuantityAvailable = m.Available ? 1 : 0,
                 Price = m.Price
             }).ToList()
         };
@@ -115,7 +116,7 @@ public class OffersController : ControllerBase
             request.PatientId,
             "new_offer",
             $"HealUp: New offer for request #{request.Id} from {pharmacy.Name}.",
-            $"/patient-offers?requestId={request.Id}",
+            $"/patient_after_pharmacy_confirmation.html?requestId={request.Id}&responseId={response.Id}",
             new { request_id = request.Id, response_id = response.Id },
             ct);
 

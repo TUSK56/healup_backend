@@ -24,6 +24,9 @@ public class RequestsController : ControllerBase
     private readonly HealUpDbContext _db;
     private readonly CloudinaryService _cloudinary;
     private readonly NotificationService _notifications;
+    private const int DispatchBatchSize = 10;
+
+    private sealed record PharmacyDistanceRow(int PharmacyId, double? Latitude, double? Longitude);
 
     public RequestsController(HealUpDbContext db, CloudinaryService cloudinary, NotificationService notifications)
     {
@@ -107,13 +110,26 @@ public class RequestsController : ControllerBase
         _db.Requests.Add(request);
         await _db.SaveChangesAsync(ct);
 
-        var pharmacyIds = await _db.Pharmacies
+        var patientLocation = await _db.Patients
+            .AsNoTracking()
+            .Where(p => p.Id == patientId.Value)
+            .Select(p => new { p.Latitude, p.Longitude })
+            .SingleOrDefaultAsync(ct);
+
+        var approvedPharmacies = await _db.Pharmacies
             .AsNoTracking()
             .Where(p => p.Status == "approved")
-            .Select(p => p.Id)
+            .Select(p => new PharmacyDistanceRow(p.Id, p.Latitude, p.Longitude))
             .ToListAsync(ct);
 
-        foreach (var pharmacyId in pharmacyIds)
+        var initialWavePharmacyIds = OrderByDistance(
+                approvedPharmacies,
+                patientLocation?.Latitude,
+                patientLocation?.Longitude)
+            .Take(DispatchBatchSize)
+            .ToList();
+
+        foreach (var pharmacyId in initialWavePharmacyIds)
         {
             await _notifications.NotifyPharmacyAsync(
                 pharmacyId,
@@ -123,6 +139,9 @@ public class RequestsController : ControllerBase
                 new { request_id = request.Id },
                 ct);
         }
+
+            request.NotifiedPharmacyCount = initialWavePharmacyIds.Count;
+            await _db.SaveChangesAsync(ct);
 
         var hydrated = await _db.Requests
             .AsNoTracking()
@@ -284,6 +303,43 @@ public class RequestsController : ControllerBase
         var value = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         return int.TryParse(value, out var id) ? id : null;
     }
+
+    private static IEnumerable<int> OrderByDistance(
+        IEnumerable<PharmacyDistanceRow> pharmacies,
+        double? fromLat,
+        double? fromLon)
+    {
+        if (fromLat is null || fromLon is null)
+        {
+            return pharmacies
+                .OrderBy(p => p.PharmacyId)
+                .Select(p => p.PharmacyId);
+        }
+
+        return pharmacies
+            .OrderBy(p => HaversineKm(fromLat.Value, fromLon.Value, p.Latitude, p.Longitude))
+            .ThenBy(p => p.PharmacyId)
+            .Select(p => p.PharmacyId);
+    }
+
+    private static double HaversineKm(double fromLat, double fromLon, double? toLat, double? toLon)
+    {
+        if (toLat is null || toLon is null)
+            return double.MaxValue;
+
+        const double r = 6371d;
+        var dLat = ToRadians(toLat.Value - fromLat);
+        var dLon = ToRadians(toLon.Value - fromLon);
+        var lat1 = ToRadians(fromLat);
+        var lat2 = ToRadians(toLat.Value);
+
+        var a = Math.Pow(Math.Sin(dLat / 2d), 2d)
+                + Math.Cos(lat1) * Math.Cos(lat2) * Math.Pow(Math.Sin(dLon / 2d), 2d);
+        var c = 2d * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1d - a));
+        return r * c;
+    }
+
+    private static double ToRadians(double degrees) => degrees * (Math.PI / 180d);
 
     private static object ToRequestDto(MedicineRequest request) => new
     {

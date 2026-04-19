@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace HealUp.Api.Models;
 
@@ -78,6 +79,8 @@ public class Admin
     public string PasswordHash { get; set; } = default!;
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    public ICollection<Notification> Notifications { get; set; } = new List<Notification>();
 }
 
 public class Pharmacy
@@ -144,6 +147,11 @@ public class MedicineRequest
 
     public DateTime ExpiresAt { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>
+    /// Number of pharmacies that have been notified so far for this same request wave flow.
+    /// </summary>
+    public int NotifiedPharmacyCount { get; set; } = 0;
 
     public ICollection<RequestMedicine> Medicines { get; set; } = new List<RequestMedicine>();
     public ICollection<PharmacyResponse> PharmacyResponses { get; set; } = new List<PharmacyResponse>();
@@ -219,6 +227,13 @@ public class Order
     [Range(0, double.MaxValue)]
     public decimal DeliveryFee { get; set; }
 
+    [MaxLength(50)]
+    public string? CouponCode { get; set; }
+
+    [Range(0, 100)]
+    [Column(TypeName = "decimal(5,2)")]
+    public decimal? CouponPercent { get; set; }
+
     [Range(0, double.MaxValue)]
     public decimal TotalPrice { get; set; }
 
@@ -279,6 +294,9 @@ public class Notification
 
     public int? PharmacyId { get; set; }
     public Pharmacy? Pharmacy { get; set; }
+
+    public int? AdminId { get; set; }
+    public Admin? Admin { get; set; }
 
     [Required, MaxLength(64)]
     public string Type { get; set; } = default!;

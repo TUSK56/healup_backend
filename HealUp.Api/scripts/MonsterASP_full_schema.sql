@@ -762,3 +762,65 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260419163000_CurrentModelAlignment'
+)
+BEGIN
+    IF COL_LENGTH(N'dbo.requests', N'NotifiedPharmacyCount') IS NULL
+        ALTER TABLE [requests] ADD [NotifiedPharmacyCount] int NOT NULL CONSTRAINT [DF_requests_NotifiedPharmacyCount] DEFAULT (0);
+
+    IF COL_LENGTH(N'dbo.orders', N'CouponCode') IS NULL
+        ALTER TABLE [orders] ADD [CouponCode] nvarchar(50) NULL;
+    ELSE
+        ALTER TABLE [orders] ALTER COLUMN [CouponCode] nvarchar(50) NULL;
+
+    IF COL_LENGTH(N'dbo.orders', N'CouponPercent') IS NULL
+        ALTER TABLE [orders] ADD [CouponPercent] decimal(5,2) NULL;
+    ELSE
+        ALTER TABLE [orders] ALTER COLUMN [CouponPercent] decimal(5,2) NULL;
+
+    IF COL_LENGTH(N'dbo.notifications', N'AdminId') IS NULL
+        ALTER TABLE [notifications] ADD [AdminId] int NULL;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM sys.indexes
+        WHERE name = N'IX_notifications_AdminId'
+          AND object_id = OBJECT_ID(N'[notifications]')
+    )
+    BEGIN
+        CREATE INDEX [IX_notifications_AdminId] ON [notifications] ([AdminId]);
+    END;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM sys.foreign_keys
+        WHERE name = N'FK_notifications_admins_AdminId'
+    )
+    BEGIN
+        ALTER TABLE [notifications] WITH CHECK
+        ADD CONSTRAINT [FK_notifications_admins_AdminId] FOREIGN KEY ([AdminId]) REFERENCES [admins] ([Id]);
+    END;
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20260419163000_CurrentModelAlignment'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20260419163000_CurrentModelAlignment', N'8.0.0');
+END;
+GO
+
+COMMIT;
+GO
+
+COMMIT;
+GO
+

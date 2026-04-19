@@ -40,6 +40,14 @@ public class OrdersController : ControllerBase
         [JsonPropertyName("delivery_address")]
         [MaxLength(500)]
         public string? DeliveryAddress { get; set; }
+
+        [JsonPropertyName("coupon_code")]
+        [MaxLength(50)]
+        public string? CouponCode { get; set; }
+
+        [JsonPropertyName("coupon_percent")]
+        [Range(0, 100)]
+        public decimal? CouponPercent { get; set; }
     }
 
     public class UpdateOrderStatusDto
@@ -103,8 +111,11 @@ public class OrdersController : ControllerBase
         var qtySum = items.Sum(i => i.Quantity);
         // Match patient cart / checkout: home delivery fee is 25 EGP when fewer than 5 units; free from 5+.
         var deliveryFee = dto.Delivery ? (qtySum >= 5 ? 0m : 25m) : 0m;
-        var vat = Math.Round(subtotal * 0.15m, 2, MidpointRounding.AwayFromZero);
-        var totalPrice = subtotal + deliveryFee + vat;
+        var couponPercent = dto.CouponPercent is >= 0 and <= 100 ? dto.CouponPercent.Value : 0m;
+        var discount = Math.Round(subtotal * (couponPercent / 100m), 2, MidpointRounding.AwayFromZero);
+        var taxableSubtotal = Math.Max(0m, subtotal - discount);
+        var vat = Math.Round(taxableSubtotal * 0.15m, 2, MidpointRounding.AwayFromZero);
+        var totalPrice = taxableSubtotal + deliveryFee + vat;
 
         var order = new Order
         {
@@ -113,6 +124,8 @@ public class OrdersController : ControllerBase
             RequestId = response.RequestId,
             Delivery = dto.Delivery,
             DeliveryFee = deliveryFee,
+            CouponCode = string.IsNullOrWhiteSpace(dto.CouponCode) ? null : dto.CouponCode.Trim(),
+            CouponPercent = couponPercent > 0m ? couponPercent : null,
             TotalPrice = totalPrice,
             Status = "pending_pharmacy_confirmation",
             Items = items,
@@ -130,6 +143,13 @@ public class OrdersController : ControllerBase
             "new_order",
             $"HealUp: New order #{order.Id} was placed and waiting for your confirmation.",
             "/pharmacy-dashboard/new-orders",
+            new { order_id = order.Id },
+            ct);
+
+        await _notifications.NotifyAllAdminsAsync(
+            "new_order_created",
+            $"HealUp: New order #{order.Id} has been created.",
+            "/admin/orders",
             new { order_id = order.Id },
             ct);
 
@@ -378,6 +398,8 @@ public class OrdersController : ControllerBase
         request_id = order.RequestId,
         delivery = order.Delivery,
         delivery_fee = order.DeliveryFee,
+        coupon_code = order.CouponCode,
+        coupon_percent = order.CouponPercent,
         total_price = order.TotalPrice,
         status = order.Status,
         created_at = order.CreatedAt,

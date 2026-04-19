@@ -16,11 +16,17 @@ public class PharmacyController : ControllerBase
 {
     private readonly HealUpDbContext _db;
     private readonly GoogleMapsService _maps;
+    private readonly NotificationService _notifications;
+    private const int DispatchBatchSize = 10;
+    private const int DispatchWindowMinutes = 10;
 
-    public PharmacyController(HealUpDbContext db, GoogleMapsService maps)
+    private sealed record PharmacyDistanceRow(int PharmacyId, double? Latitude, double? Longitude);
+
+    public PharmacyController(HealUpDbContext db, GoogleMapsService maps, NotificationService notifications)
     {
         _db = db;
         _maps = maps;
+        _notifications = notifications;
     }
 
     public sealed class UpdatePharmacyProfileDto
@@ -158,9 +164,19 @@ public class PharmacyController : ControllerBase
         if (pharmacy.Status != "approved")
             return StatusCode(403, new { message = "HealUp: Your pharmacy account is pending admin approval." });
 
+        await DispatchPendingRequestWavesAsync(ct);
+
+        var now = DateTime.UtcNow;
+        var approvedPharmacies = await _db.Pharmacies
+            .AsNoTracking()
+            .Where(p => p.Status == "approved")
+            .Select(p => new PharmacyDistanceRow(p.Id, p.Latitude, p.Longitude))
+            .ToListAsync(ct);
+
         var requests = await _db.Requests
             .AsNoTracking()
-            .Where(r => r.Status == "active" && r.ExpiresAt > DateTime.UtcNow)
+            .Where(r => r.Status == "active" && r.ExpiresAt > now)
+            .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id))
             .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id && pr.PharmacyId == pharmacyId.Value))
             .Where(r => !_db.PharmacyDeclinedRequests.Any(d => d.RequestId == r.Id && d.PharmacyId == pharmacyId.Value))
             .Include(r => r.Medicines)
@@ -168,8 +184,18 @@ public class PharmacyController : ControllerBase
             .OrderBy(r => r.ExpiresAt)
             .ToListAsync(ct);
 
+        var eligibleRequests = requests.Where(req =>
+        {
+            var sortedPharmacyIds = OrderByDistance(approvedPharmacies, req.Patient.Latitude, req.Patient.Longitude).ToList();
+            if (sortedPharmacyIds.Count == 0)
+                return false;
+
+            var targetCount = Math.Min(GetTargetNotifiedCount(req.CreatedAt, now), sortedPharmacyIds.Count);
+            return sortedPharmacyIds.Take(targetCount).Contains(pharmacyId.Value);
+        }).ToList();
+
         var results = new List<object>();
-        foreach (var req in requests)
+        foreach (var req in eligibleRequests)
         {
             var distance = await _maps.GetDistanceKmAsync(
                 pharmacy.Latitude,
@@ -326,6 +352,115 @@ public class PharmacyController : ControllerBase
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private async Task DispatchPendingRequestWavesAsync(CancellationToken ct)
+    {
+        var now = DateTime.UtcNow;
+
+        var activeRequests = await _db.Requests
+            .Include(r => r.Patient)
+            .Where(r => r.Status == "active" && r.ExpiresAt > now)
+            .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id))
+            .ToListAsync(ct);
+
+        if (activeRequests.Count == 0)
+            return;
+
+        var approvedPharmacies = await _db.Pharmacies
+            .AsNoTracking()
+            .Where(p => p.Status == "approved")
+            .Select(p => new PharmacyDistanceRow(p.Id, p.Latitude, p.Longitude))
+            .ToListAsync(ct);
+
+        if (approvedPharmacies.Count == 0)
+            return;
+
+        var didUpdate = false;
+
+        foreach (var request in activeRequests)
+        {
+            var sortedPharmacyIds = OrderByDistance(
+                    approvedPharmacies,
+                    request.Patient.Latitude,
+                    request.Patient.Longitude)
+                .ToList();
+
+            if (sortedPharmacyIds.Count == 0)
+                continue;
+
+            var targetCount = Math.Min(GetTargetNotifiedCount(request.CreatedAt, now), sortedPharmacyIds.Count);
+            var alreadyNotified = Math.Clamp(request.NotifiedPharmacyCount, 0, sortedPharmacyIds.Count);
+
+            if (targetCount <= alreadyNotified)
+                continue;
+
+            var newlyReleasedPharmacyIds = sortedPharmacyIds
+                .Skip(alreadyNotified)
+                .Take(targetCount - alreadyNotified)
+                .ToList();
+
+            foreach (var pharmacyId in newlyReleasedPharmacyIds)
+            {
+                await _notifications.NotifyPharmacyAsync(
+                    pharmacyId,
+                    "new_request",
+                    $"HealUp: New request #{request.Id} is now available.",
+                    "/pharmacy-dashboard/new-orders",
+                    new { request_id = request.Id },
+                    ct);
+            }
+
+            request.NotifiedPharmacyCount = targetCount;
+            didUpdate = true;
+        }
+
+        if (didUpdate)
+            await _db.SaveChangesAsync(ct);
+    }
+
+    private static int GetTargetNotifiedCount(DateTime createdAt, DateTime now)
+    {
+        var elapsedMinutes = Math.Max(0d, (now - createdAt).TotalMinutes);
+        var waveIndex = (int)Math.Floor(elapsedMinutes / DispatchWindowMinutes);
+        return (waveIndex + 1) * DispatchBatchSize;
+    }
+
+    private static IEnumerable<int> OrderByDistance(
+        IEnumerable<PharmacyDistanceRow> pharmacies,
+        double? fromLat,
+        double? fromLon)
+    {
+        if (fromLat is null || fromLon is null)
+        {
+            return pharmacies
+                .OrderBy(p => p.PharmacyId)
+                .Select(p => p.PharmacyId);
+        }
+
+        return pharmacies
+            .OrderBy(p => HaversineKm(fromLat.Value, fromLon.Value, p.Latitude, p.Longitude))
+            .ThenBy(p => p.PharmacyId)
+            .Select(p => p.PharmacyId);
+    }
+
+    private static double HaversineKm(double fromLat, double fromLon, double? toLat, double? toLon)
+    {
+        if (toLat is null || toLon is null)
+            return double.MaxValue;
+
+        const double r = 6371d;
+        var dLat = ToRadians(toLat.Value - fromLat);
+        var dLon = ToRadians(toLon.Value - fromLon);
+        var lat1 = ToRadians(fromLat);
+        var lat2 = ToRadians(toLat.Value);
+
+        var a = Math.Pow(Math.Sin(dLat / 2d), 2d)
+                + Math.Cos(lat1) * Math.Cos(lat2) * Math.Pow(Math.Sin(dLon / 2d), 2d);
+        var c = 2d * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1d - a));
+        return r * c;
+    }
+
+    private static double ToRadians(double degrees) => degrees * (Math.PI / 180d);
 
     private static object ToPharmacyMeDto(Pharmacy pharmacy) => new
     {

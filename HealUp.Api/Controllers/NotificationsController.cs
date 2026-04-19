@@ -28,7 +28,11 @@ public class NotificationsController : ControllerBase
         var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
         var query = _db.Notifications.AsNoTracking().AsQueryable();
 
-        if (string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+        {
+            query = query.Where(n => n.AdminId == entityId.Value);
+        }
+        else if (string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase))
         {
             query = query.Where(n => n.PharmacyId == entityId.Value);
         }
@@ -70,9 +74,11 @@ public class NotificationsController : ControllerBase
         if (notification is null)
             return NotFound(new { message = "HealUp: Notification not found." });
 
-        var allowed = string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase)
-            ? notification.PharmacyId == entityId.Value
-            : notification.PatientId == entityId.Value;
+        var allowed = string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase)
+            ? notification.AdminId == entityId.Value
+            : string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase)
+                ? notification.PharmacyId == entityId.Value
+                : notification.PatientId == entityId.Value;
         if (!allowed)
             return StatusCode(403, new { message = "HealUp: You are not allowed to update this notification." });
 
@@ -90,7 +96,9 @@ public class NotificationsController : ControllerBase
 
         var role = User.FindFirstValue(ClaimTypes.Role) ?? string.Empty;
         var query = _db.Notifications.AsQueryable();
-        if (string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+            query = query.Where(n => n.AdminId == entityId.Value && !n.IsRead);
+        else if (string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase))
             query = query.Where(n => n.PharmacyId == entityId.Value && !n.IsRead);
         else
             query = query.Where(n => n.PatientId == entityId.Value && !n.IsRead);
@@ -105,6 +113,17 @@ public class NotificationsController : ControllerBase
 
     private static string ResolveRoute(string type, string role)
     {
+        if (string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+        {
+            return type switch
+            {
+                "new_patient_registered" => "/admin/patients",
+                "new_pharmacy_registered" => "/admin/pharmacies",
+                "new_order_created" => "/admin/orders",
+                _ => "/admin/dashboard"
+            };
+        }
+
         if (string.Equals(role, "pharmacy", StringComparison.OrdinalIgnoreCase))
         {
             return type switch

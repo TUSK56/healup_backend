@@ -15,12 +15,14 @@ public class AuthController : ControllerBase
     private readonly HealUpDbContext _db;
     private readonly JwtTokenService _jwt;
     private readonly IConfiguration _configuration;
+    private readonly NotificationService _notifications;
 
-    public AuthController(HealUpDbContext db, JwtTokenService jwt, IConfiguration configuration)
+    public AuthController(HealUpDbContext db, JwtTokenService jwt, IConfiguration configuration, NotificationService notifications)
     {
         _db = db;
         _jwt = jwt;
         _configuration = configuration;
+        _notifications = notifications;
     }
 
     public class PatientRegisterDto
@@ -33,6 +35,15 @@ public class AuthController : ControllerBase
 
         [MaxLength(50)]
         public string? Phone { get; set; }
+
+        [MaxLength(120)]
+        public string? City { get; set; }
+
+        [MaxLength(120)]
+        public string? District { get; set; }
+
+        [MaxLength(500)]
+        public string? AddressDetails { get; set; }
 
         [Required, MinLength(6)]
         public string Password { get; set; } = string.Empty;
@@ -132,7 +143,36 @@ public class AuthController : ControllerBase
         _db.Patients.Add(patient);
         await _db.SaveChangesAsync(ct);
 
+        var hasAddressData =
+            !string.IsNullOrWhiteSpace(dto.City) ||
+            !string.IsNullOrWhiteSpace(dto.District) ||
+            !string.IsNullOrWhiteSpace(dto.AddressDetails) ||
+            (dto.Latitude.HasValue && dto.Longitude.HasValue);
+
+        if (hasAddressData)
+        {
+            _db.PatientAddresses.Add(new PatientAddress
+            {
+                PatientId = patient.Id,
+                Label = "المنزل",
+                IconKey = "home",
+                City = string.IsNullOrWhiteSpace(dto.City) ? null : dto.City.Trim(),
+                District = string.IsNullOrWhiteSpace(dto.District) ? null : dto.District.Trim(),
+                AddressDetails = string.IsNullOrWhiteSpace(dto.AddressDetails) ? null : dto.AddressDetails.Trim(),
+                Latitude = dto.Latitude,
+                Longitude = dto.Longitude
+            });
+            await _db.SaveChangesAsync(ct);
+        }
+
         var token = _jwt.GenerateForPatient(patient);
+
+        await _notifications.NotifyAllAdminsAsync(
+            "new_patient_registered",
+            $"HealUp: New patient account created ({patient.Name}).",
+            "/admin/patients",
+            new { patient_id = patient.Id },
+            ct);
 
         return Created(string.Empty, new
         {
@@ -172,6 +212,13 @@ public class AuthController : ControllerBase
         await _db.SaveChangesAsync(ct);
 
         var token = _jwt.GenerateForPharmacy(pharmacy);
+
+        await _notifications.NotifyAllAdminsAsync(
+            "new_pharmacy_registered",
+            $"HealUp: New pharmacy registration submitted ({pharmacy.Name}).",
+            "/admin/pharmacies",
+            new { pharmacy_id = pharmacy.Id },
+            ct);
 
         return Created(string.Empty, new
         {

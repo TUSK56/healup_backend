@@ -69,6 +69,7 @@ public class HealUpDbContext : DbContext
             e.Property(x => x.Status).IsRequired().HasMaxLength(32);
             e.Property(x => x.ExpiresAt).IsRequired();
             e.Property(x => x.EstimatedTotal).HasPrecision(18, 2);
+            e.Property(x => x.NotifiedPharmacyCount).HasDefaultValue(0);
             e.HasOne(x => x.Patient)
                 .WithMany(x => x.Requests)
                 .HasForeignKey(x => x.PatientId);
@@ -162,6 +163,9 @@ public class HealUpDbContext : DbContext
             e.Property(x => x.Type).IsRequired().HasMaxLength(64);
             e.Property(x => x.Message).IsRequired().HasMaxLength(1000);
             e.Property(x => x.TargetRoute).HasMaxLength(512);
+            e.HasOne(x => x.Admin)
+                .WithMany(x => x.Notifications)
+                .HasForeignKey(x => x.AdminId);
         });
 
         modelBuilder.Entity<PatientAddress>(e =>

@@ -61,6 +61,20 @@ public class InvoicesController : ControllerBase
         if (request is null)
             return NotFound(new { message = "HealUp: Request not found." });
 
+        var latestOrderQuery = _db.Orders
+            .AsNoTracking()
+            .Where(o => o.RequestId == requestId)
+            .Include(o => o.Pharmacy)
+            .Include(o => o.Items)
+            .AsQueryable();
+
+        if (role == "pharmacy")
+            latestOrderQuery = latestOrderQuery.Where(o => o.PharmacyId == entityId.Value);
+
+        var latestOrder = await latestOrderQuery
+            .OrderByDescending(o => o.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
         var latestOfferQuery = _db.PharmacyResponses
             .AsNoTracking()
             .Where(r => r.RequestId == requestId)
@@ -76,7 +90,11 @@ public class InvoicesController : ControllerBase
             .FirstOrDefaultAsync(ct);
 
         decimal? subtotal = null;
-        if (latestOffer is not null && request.Medicines.Count > 0)
+        if (latestOrder is not null && latestOrder.Items.Count > 0)
+        {
+            subtotal = latestOrder.Items.Sum(i => i.Price * i.Quantity);
+        }
+        else if (latestOffer is not null && request.Medicines.Count > 0)
         {
             subtotal = 0;
             foreach (var reqMed in request.Medicines)
@@ -88,8 +106,22 @@ public class InvoicesController : ControllerBase
             }
         }
 
-        var displayTotal = subtotal ?? request.EstimatedTotal ?? 0m;
-        var pharmacyName = latestOffer?.Pharmacy?.Name;
+        var qtySum = latestOrder?.Items.Sum(i => i.Quantity)
+            ?? request.Medicines.Sum(m => m.Quantity);
+        var deliveryFee = latestOrder?.DeliveryFee ?? (qtySum >= 5 ? 0m : 25m);
+        var couponPercent = latestOrder?.CouponPercent is > 0m and <= 100m
+            ? latestOrder.CouponPercent.Value
+            : 0m;
+        var couponCode = string.IsNullOrWhiteSpace(latestOrder?.CouponCode) ? null : latestOrder!.CouponCode!.Trim();
+
+        var baseSubtotal = subtotal ?? request.EstimatedTotal ?? 0m;
+        var discountAmount = Math.Round(baseSubtotal * (couponPercent / 100m), 2, MidpointRounding.AwayFromZero);
+        var subtotalAfterDiscount = Math.Max(0m, baseSubtotal - discountAmount);
+        var vatAmount = Math.Round(subtotalAfterDiscount * 0.15m, 2, MidpointRounding.AwayFromZero);
+        var displayTotal = latestOrder?.TotalPrice ?? (subtotalAfterDiscount + deliveryFee + vatAmount);
+
+        var pharmacyName = latestOrder?.Pharmacy?.Name ?? latestOffer?.Pharmacy?.Name;
+        var orderStatusLabel = ToArabicOrderStatus(latestOrder?.Status);
         var createdAt = request.CreatedAt.ToString("yyyy-MM-dd HH:mm");
 
         TryRegisterArabicFont();
@@ -102,69 +134,162 @@ public class InvoicesController : ControllerBase
                 page.Size(PageSizes.A4);
                 page.DefaultTextStyle(x => x.FontFamily("Arial").FontSize(12));
 
-                page.Header()
-                    .Row(row =>
-                    {
-                        row.RelativeItem().AlignRight().Text($"فاتورة طلب #HLP-{request.Id}").FontSize(18).SemiBold();
-                        row.ConstantItem(10);
-                        row.RelativeItem().AlignLeft().Text($"تاريخ: {createdAt}").FontSize(10).FontColor(Colors.Grey.Darken1);
-                    });
-
-                page.Content().Column(col =>
+                page.Background().Layers(layers =>
                 {
-                    col.Spacing(10);
-
-                    col.Item().AlignRight().Text(pharmacyName is { Length: > 0 } ? $"الصيدلية: {pharmacyName}" : "الصيدلية: (بانتظار عرض)");
-                    col.Item().LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
-
-                    col.Item().AlignRight().Text("الأدوية المطلوبة").FontSize(14).SemiBold();
-                    col.Item().Table(table =>
+                    layers.Layer().Element(bg =>
                     {
-                        table.ColumnsDefinition(columns =>
+                        bg.Background(Colors.Grey.Lighten5)
+                            .Row(r =>
+                            {
+                                r.ConstantItem(14).Background(Colors.Blue.Darken2);
+                                r.RelativeItem().AlignCenter().AlignMiddle().Text("HealUp")
+                                    .FontSize(92)
+                                    .SemiBold()
+                                    .FontColor(Colors.Blue.Lighten5);
+                            });
+                    });
+                });
+
+                page.Header().Element(header =>
+                {
+                    header.Background(Colors.White)
+                        .Border(1.2f)
+                        .BorderColor(Colors.Blue.Lighten4)
+                        .Padding(14)
+                        .Row(row =>
                         {
-                            columns.RelativeColumn(4); // name
-                            columns.RelativeColumn(2); // qty
-                            columns.RelativeColumn(2); // unit
-                            columns.RelativeColumn(2); // total
+                            row.RelativeItem().AlignRight().Column(c =>
+                            {
+                                c.Item().Text("فاتورة شراء إلكترونية").FontSize(22).SemiBold().FontColor(Colors.Blue.Darken3);
+                                c.Item().PaddingTop(2).Text($"رقم الفاتورة: HLP-{request.Id}").FontSize(11).FontColor(Colors.Grey.Darken2);
+                                c.Item().Text($"تاريخ الإصدار: {createdAt}").FontSize(10).FontColor(Colors.Grey.Darken2);
+                            });
+
+                            row.ConstantItem(16);
+
+                            row.RelativeItem().AlignLeft().Row(logo =>
+                            {
+                                logo.ConstantItem(52).Height(52)
+                                    .Background(Colors.Blue.Darken3)
+                                    .AlignCenter()
+                                    .AlignMiddle()
+                                    .Text("H+")
+                                    .FontSize(16)
+                                    .SemiBold()
+                                    .FontColor(Colors.White);
+                                logo.ConstantItem(8);
+                                logo.RelativeItem().AlignMiddle().Column(b =>
+                                {
+                                    b.Item().Text("HealUp").FontSize(21).SemiBold().FontColor(Colors.Blue.Darken3);
+                                    b.Item().Text("Healthcare Invoice").FontSize(9).FontColor(Colors.Grey.Darken1);
+                                });
+                            });
                         });
+                });
 
-                        table.Header(header =>
-                        {
-                            header.Cell().AlignRight().Text("الدواء").SemiBold();
-                            header.Cell().AlignCenter().Text("الكمية").SemiBold();
-                            header.Cell().AlignCenter().Text("سعر القطعة").SemiBold();
-                            header.Cell().AlignCenter().Text("الإجمالي").SemiBold();
-                        });
+                page.Content().PaddingTop(12).Column(col =>
+                {
+                    col.Spacing(12);
 
-                        foreach (var med in request.Medicines)
-                        {
-                            var unit = latestOffer?.Medicines.FirstOrDefault(m =>
-                                string.Equals(m.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
-                            var lineTotal = unit.HasValue ? unit.Value * med.Quantity : (decimal?)null;
-
-                            table.Cell().AlignRight().Text(med.MedicineName);
-                            table.Cell().AlignCenter().Text(med.Quantity.ToString());
-                            table.Cell().AlignCenter().Text(unit.HasValue ? unit.Value.ToString("0.00") : "—");
-                            table.Cell().AlignCenter().Text(lineTotal.HasValue ? lineTotal.Value.ToString("0.00") : "—");
-                        }
+                    col.Item().Background(Colors.Blue.Lighten5).Border(1).BorderColor(Colors.Blue.Lighten3).Padding(10).Row(r =>
+                    {
+                        r.RelativeItem().AlignRight().Text(pharmacyName is { Length: > 0 } ? $"الصيدلية: {pharmacyName}" : "الصيدلية: (بانتظار عرض)").FontSize(12).SemiBold();
+                        r.RelativeItem().AlignLeft().Text($"حالة الطلب: {orderStatusLabel}").FontSize(12).SemiBold().FontColor(Colors.Blue.Darken3);
                     });
 
-                    col.Item().LineHorizontal(1).LineColor(Colors.Grey.Lighten2);
-
-                    col.Item().Row(r =>
+                    col.Item().Background(Colors.White).Border(1).BorderColor(Colors.Grey.Lighten2).Padding(10).Column(section =>
                     {
-                        r.RelativeItem().AlignRight().Text("الإجمالي (تقديري/نهائي):").SemiBold();
-                        r.RelativeItem().AlignLeft().Text($"{displayTotal:0.00} ج.م").FontSize(14).SemiBold();
+                        section.Spacing(8);
+                        section.Item().AlignRight().Text("تفاصيل الأدوية").FontSize(15).SemiBold().FontColor(Colors.Blue.Darken3);
+
+                        section.Item().Table(table =>
+                        {
+                            table.ColumnsDefinition(columns =>
+                            {
+                                columns.RelativeColumn(4);
+                                columns.RelativeColumn(2);
+                                columns.RelativeColumn(2);
+                                columns.RelativeColumn(2);
+                            });
+
+                            table.Header(header =>
+                            {
+                                header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignRight().Text("الدواء").SemiBold();
+                                header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignCenter().Text("الكمية").SemiBold();
+                                header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignCenter().Text("سعر القطعة").SemiBold();
+                                header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignCenter().Text("الإجمالي").SemiBold();
+                            });
+
+                            foreach (var med in request.Medicines)
+                            {
+                                var unit = latestOffer?.Medicines.FirstOrDefault(m =>
+                                    string.Equals(m.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
+                                if (latestOrder is not null)
+                                    unit = latestOrder.Items.FirstOrDefault(i => string.Equals(i.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
+                                var lineTotal = unit.HasValue ? unit.Value * med.Quantity : (decimal?)null;
+
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text(med.MedicineName);
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(med.Quantity.ToString());
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(unit.HasValue ? unit.Value.ToString("0.00") : "—");
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.HasValue ? lineTotal.Value.ToString("0.00") : "—");
+                            }
+                        });
+                    });
+
+                    col.Item().Background(Colors.White).Border(1).BorderColor(Colors.Grey.Lighten2).Padding(12).Column(sum =>
+                    {
+                        sum.Spacing(7);
+
+                        sum.Item().Row(r =>
+                        {
+                            r.RelativeItem().AlignRight().Text("المجموع الفرعي:").SemiBold();
+                            r.RelativeItem().AlignLeft().Text($"{baseSubtotal:0.00} ج.م");
+                        });
+
+                        if (discountAmount > 0m)
+                        {
+                            var discountLabel = couponCode is { Length: > 0 }
+                                ? $"الخصم ({couponCode} - {couponPercent:0.##}%):"
+                                : "الخصم:";
+
+                            sum.Item().Row(r =>
+                            {
+                                r.RelativeItem().AlignRight().Text(discountLabel).SemiBold();
+                                r.RelativeItem().AlignLeft().Text($"-{discountAmount:0.00} ج.م").FontColor(Colors.Green.Darken2);
+                            });
+                        }
+
+                        sum.Item().Row(r =>
+                        {
+                            r.RelativeItem().AlignRight().Text("رسوم التوصيل:").SemiBold();
+                            r.RelativeItem().AlignLeft().Text($"{deliveryFee:0.00} ج.م");
+                        });
+
+                        sum.Item().Row(r =>
+                        {
+                            r.RelativeItem().AlignRight().Text("ضريبة القيمة المضافة (15%):").SemiBold();
+                            r.RelativeItem().AlignLeft().Text($"{vatAmount:0.00} ج.م");
+                        });
+
+                        sum.Item().PaddingTop(6).Background(Colors.Blue.Lighten5).Border(1).BorderColor(Colors.Blue.Lighten3).Padding(8).Row(r =>
+                        {
+                            r.RelativeItem().AlignRight().Text("الإجمالي:").FontSize(14).SemiBold().FontColor(Colors.Blue.Darken2);
+                            r.RelativeItem().AlignLeft().Text($"{displayTotal:0.00} ج.م").FontSize(16).SemiBold().FontColor(Colors.Blue.Darken2);
+                        });
                     });
 
                     col.Item().AlignRight().Text(latestOffer is null
                         ? "ملاحظة: هذه قيمة تقديرية حتى تقوم الصيدلية بتحديد السعر."
-                        : "ملاحظة: تم تحديث السعر بناءً على آخر عرض من الصيدلية.")
+                        : "ملاحظة: تم تحديث السعر بناءً على بيانات الطلب المؤكد وآخر عرض متاح.")
                         .FontSize(10)
                         .FontColor(Colors.Grey.Darken1);
                 });
 
-                page.Footer().AlignCenter().Text("HealUp").FontSize(10).FontColor(Colors.Grey.Darken1);
+                page.Footer().PaddingTop(6).Row(r =>
+                {
+                    r.RelativeItem().AlignRight().Text("شكراً لاستخدام HealUp").FontSize(10).FontColor(Colors.Grey.Darken1);
+                    r.RelativeItem().AlignLeft().Text("www.healup.local").FontSize(10).FontColor(Colors.Blue.Darken2);
+                });
             });
         }).GeneratePdf();
 
@@ -190,6 +315,22 @@ public class InvoicesController : ControllerBase
         {
             // best-effort only
         }
+    }
+
+    private static string ToArabicOrderStatus(string? status)
+    {
+        var s = (status ?? string.Empty).Trim().ToLowerInvariant();
+        return s switch
+        {
+            "pending_pharmacy_confirmation" => "بانتظار تأكيد الصيدلية",
+            "confirmed" => "تم التأكيد",
+            "preparing" => "قيد التجهيز",
+            "out_for_delivery" => "خارج للتوصيل",
+            "ready_for_pickup" => "جاهز للاستلام",
+            "completed" => "تم التسليم",
+            "rejected" => "مرفوض",
+            _ => "بانتظار التأكيد"
+        };
     }
 }
 

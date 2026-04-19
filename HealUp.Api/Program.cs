@@ -21,7 +21,7 @@ if (builder.Environment.IsDevelopment()
     && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASPNETCORE_URLS"))
     && !hasAspNetCorePort)
 {
-    builder.WebHost.UseUrls("http://127.0.0.1:5000");
+    builder.WebHost.UseUrls("http://127.0.0.1:8000");
 }
 
 var configuration = builder.Configuration;
@@ -184,6 +184,9 @@ using (var scope = app.Services.CreateScope())
             {
                 await db.Database.ExecuteSqlRawAsync(
                     """
+                                        IF COL_LENGTH(N'dbo.requests', N'NotifiedPharmacyCount') IS NULL
+                                            ALTER TABLE dbo.requests ADD NotifiedPharmacyCount int NOT NULL CONSTRAINT DF_requests_NotifiedPharmacyCount DEFAULT(0);
+
                     IF COL_LENGTH(N'dbo.orders', N'PreparingAt') IS NULL
                       ALTER TABLE dbo.orders ADD PreparingAt datetime2 NULL;
                     IF COL_LENGTH(N'dbo.orders', N'PaymentMethod') IS NULL
@@ -192,6 +195,32 @@ using (var scope = app.Services.CreateScope())
                       ALTER TABLE dbo.orders ALTER COLUMN PaymentMethod nvarchar(256) NULL;
                     IF COL_LENGTH(N'dbo.orders', N'DeliveryAddressSnapshot') IS NULL
                       ALTER TABLE dbo.orders ADD DeliveryAddressSnapshot nvarchar(500) NULL;
+                                        IF COL_LENGTH(N'dbo.orders', N'CouponCode') IS NULL
+                                            ALTER TABLE dbo.orders ADD CouponCode nvarchar(50) NULL;
+                                        ELSE
+                                            ALTER TABLE dbo.orders ALTER COLUMN CouponCode nvarchar(50) NULL;
+                                        IF COL_LENGTH(N'dbo.orders', N'CouponPercent') IS NULL
+                                            ALTER TABLE dbo.orders ADD CouponPercent decimal(5,2) NULL;
+                                        ELSE
+                                            ALTER TABLE dbo.orders ALTER COLUMN CouponPercent decimal(5,2) NULL;
+
+                                        IF COL_LENGTH(N'dbo.notifications', N'AdminId') IS NULL
+                                            ALTER TABLE dbo.notifications ADD AdminId int NULL;
+                    """);
+
+                await db.Database.ExecuteSqlRawAsync(
+                    """
+                    IF COL_LENGTH(N'dbo.notifications', N'AdminId') IS NOT NULL
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM sys.foreign_keys
+                        WHERE name = N'FK_notifications_admins_AdminId'
+                    )
+                    BEGIN
+                      ALTER TABLE dbo.notifications WITH CHECK
+                      ADD CONSTRAINT FK_notifications_admins_AdminId
+                      FOREIGN KEY (AdminId) REFERENCES dbo.admins (Id);
+                    END
                     """);
 
                 await db.Database.ExecuteSqlRawAsync(

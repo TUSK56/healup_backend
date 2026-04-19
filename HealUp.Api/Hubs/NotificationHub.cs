@@ -17,7 +17,13 @@ public class NotificationHub : Hub
 
             if (!string.IsNullOrEmpty(guard) && !string.IsNullOrEmpty(id))
             {
-                if (guard == "user")
+                var role = user.Claims.FirstOrDefault(c => c.Type.EndsWith("/role") || c.Type == "role")?.Value;
+
+                if (guard == "user" && string.Equals(role, "admin", StringComparison.OrdinalIgnoreCase))
+                {
+                    await Groups.AddToGroupAsync(Context.ConnectionId, $"healup.admin.{id}");
+                }
+                else if (guard == "user")
                 {
                     await Groups.AddToGroupAsync(Context.ConnectionId, $"healup.patient.{id}");
                 }
