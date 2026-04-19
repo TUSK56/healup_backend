@@ -164,14 +164,7 @@ public class PharmacyController : ControllerBase
         if (pharmacy.Status != "approved")
             return StatusCode(403, new { message = "HealUp: Your pharmacy account is pending admin approval." });
 
-        await DispatchPendingRequestWavesAsync(ct);
-
         var now = DateTime.UtcNow;
-        var approvedPharmacies = await _db.Pharmacies
-            .AsNoTracking()
-            .Where(p => p.Status == "approved")
-            .Select(p => new PharmacyDistanceRow(p.Id, p.Latitude, p.Longitude))
-            .ToListAsync(ct);
 
         var requests = await _db.Requests
             .AsNoTracking()
@@ -184,26 +177,9 @@ public class PharmacyController : ControllerBase
             .OrderBy(r => r.ExpiresAt)
             .ToListAsync(ct);
 
-        var eligibleRequests = requests.Where(req =>
-        {
-            var sortedPharmacyIds = OrderByDistance(approvedPharmacies, req.Patient.Latitude, req.Patient.Longitude).ToList();
-            if (sortedPharmacyIds.Count == 0)
-                return false;
-
-            var targetCount = Math.Min(GetTargetNotifiedCount(req.CreatedAt, now), sortedPharmacyIds.Count);
-            return sortedPharmacyIds.Take(targetCount).Contains(pharmacyId.Value);
-        }).ToList();
-
         var results = new List<object>();
-        foreach (var req in eligibleRequests)
+        foreach (var req in requests)
         {
-            var distance = await _maps.GetDistanceKmAsync(
-                pharmacy.Latitude,
-                pharmacy.Longitude,
-                req.Patient.Latitude,
-                req.Patient.Longitude,
-                ct);
-
             results.Add(new
             {
                 request = new
@@ -225,7 +201,7 @@ public class PharmacyController : ControllerBase
                         quantity = m.Quantity
                     })
                 },
-                distance_km = distance
+                distance_km = (double?)null
             });
         }
 
