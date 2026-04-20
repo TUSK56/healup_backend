@@ -156,29 +156,43 @@ public class RequestsController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken ct)
+    public async Task<IActionResult> List([FromQuery] int? page_size, CancellationToken ct)
     {
         var patientId = GetCurrentEntityId();
         if (patientId is null)
             return Unauthorized(new { message = "HealUp: Invalid token subject." });
 
-        var data = await _db.Requests
+        const int defaultPageSize = 100;
+        const int maxPageSize = 200;
+        var take = Math.Clamp(page_size ?? defaultPageSize, 1, maxPageSize);
+
+        var rows = await _db.Requests
             .AsNoTracking()
             .Where(r => r.PatientId == patientId.Value)
-            .Include(r => r.Medicines)
             .OrderByDescending(r => r.CreatedAt)
-            .AsSplitQuery()
+            .Take(take)
+            .Select(r => new
+            {
+                r.Id,
+                r.PatientId,
+                r.PrescriptionUrl,
+                r.EstimatedTotal,
+                r.Status,
+                r.ExpiresAt,
+                r.CreatedAt,
+                Medicines = r.Medicines.Select(m => new { m.Id, m.MedicineName, m.Quantity })
+            })
             .ToListAsync(ct);
 
         return Ok(new
         {
-            data = data.Select(r =>
+            data = rows.Select(r =>
             {
                 return new
                 {
                     id = r.Id,
                     patient_id = r.PatientId,
-                    prescription_url = r.PrescriptionUrl,
+                    prescription_url = TruncatePrescriptionUrlForList(r.PrescriptionUrl),
                     estimated_total = r.EstimatedTotal,
                     status = r.Status,
                     expires_at = r.ExpiresAt,
@@ -195,8 +209,17 @@ public class RequestsController : ControllerBase
                         quantity = m.Quantity
                     })
                 };
-            })
+            }),
+            page_size = take
         });
+    }
+
+    private static string? TruncatePrescriptionUrlForList(string? url)
+    {
+        if (string.IsNullOrEmpty(url))
+            return url;
+        const int max = 2048;
+        return url.Length <= max ? url : null;
     }
 
     [HttpGet("{id:int}")]

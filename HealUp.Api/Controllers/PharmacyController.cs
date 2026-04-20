@@ -148,7 +148,7 @@ public class PharmacyController : ControllerBase
     }
 
     [HttpGet("requests")]
-    public async Task<IActionResult> IncomingRequests(CancellationToken ct)
+    public async Task<IActionResult> IncomingRequests([FromQuery] int? page_size, CancellationToken ct)
     {
         var pharmacyId = GetCurrentEntityId();
         if (pharmacyId is null)
@@ -165,50 +165,76 @@ public class PharmacyController : ControllerBase
             return StatusCode(403, new { message = "HealUp: Your pharmacy account is pending admin approval." });
 
         var now = DateTime.UtcNow;
+        const int defaultPageSize = 50;
+        const int maxPageSize = 100;
+        var take = Math.Clamp(page_size ?? defaultPageSize, 1, maxPageSize);
 
         // Incoming list: active requests this pharmacy can still bid on — other pharmacies' offers must NOT hide the request.
         // Exclude: already ordered by patient, this pharmacy declined, or this pharmacy already submitted an offer.
-        var requests = await _db.Requests
+        // Project in-database + cap rows: loading unbounded rows caused multi-MB JSON and very slow responses on production DBs.
+        var baseQuery = _db.Requests
             .AsNoTracking()
             .Where(r => r.Status == "active" && r.ExpiresAt > now)
             .Where(r => !_db.Orders.Any(o => o.RequestId == r.Id))
             .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id && pr.PharmacyId == pharmacyId.Value))
-            .Where(r => !_db.PharmacyDeclinedRequests.Any(d => d.RequestId == r.Id && d.PharmacyId == pharmacyId.Value))
-            .Include(r => r.Medicines)
-            .Include(r => r.Patient)
+            .Where(r => !_db.PharmacyDeclinedRequests.Any(d => d.RequestId == r.Id && d.PharmacyId == pharmacyId.Value));
+
+        var projected = baseQuery
             .OrderBy(r => r.ExpiresAt)
-            .AsSplitQuery()
-            .ToListAsync(ct);
-
-        var results = new List<object>();
-        foreach (var req in requests)
-        {
-            results.Add(new
+            .Take(take + 1)
+            .Select(r => new
             {
-                request = new
-                {
-                    id = req.Id,
-                    status = req.Status,
-                    expires_at = req.ExpiresAt,
-                    created_at = req.CreatedAt,
-                    prescription_url = req.PrescriptionUrl,
-                    patient = new
-                    {
-                        id = req.Patient.Id,
-                        name = req.Patient.Name
-                    },
-                    medicines = req.Medicines.Select(m => new
-                    {
-                        id = m.Id,
-                        medicine_name = m.MedicineName,
-                        quantity = m.Quantity
-                    })
-                },
-                distance_km = (double?)null
+                r.Id,
+                r.Status,
+                r.ExpiresAt,
+                r.CreatedAt,
+                r.PrescriptionUrl,
+                PatientId = r.Patient.Id,
+                PatientName = r.Patient.Name,
+                Medicines = r.Medicines
+                    .OrderBy(m => m.Id)
+                    .Select(m => new { m.Id, m.MedicineName, m.Quantity })
             });
-        }
 
-        return Ok(new { data = results });
+        var rows = await projected.ToListAsync(ct);
+        var hasMore = rows.Count > take;
+        if (hasMore)
+            rows.RemoveAt(rows.Count - 1);
+
+        var results = rows.Select(row => new
+        {
+            request = new
+            {
+                id = row.Id,
+                status = row.Status,
+                expires_at = row.ExpiresAt,
+                created_at = row.CreatedAt,
+                prescription_url = TruncatePrescriptionUrlForList(row.PrescriptionUrl),
+                patient = new
+                {
+                    id = row.PatientId,
+                    name = row.PatientName
+                },
+                medicines = row.Medicines.Select(m => new
+                {
+                    id = m.Id,
+                    medicine_name = m.MedicineName,
+                    quantity = m.Quantity
+                })
+            },
+            distance_km = (double?)null
+        }).ToList();
+
+        return Ok(new { data = results, page_size = take, has_more = hasMore });
+    }
+
+    /// <summary>List endpoints must not echo huge accidently-stored prescription payloads (e.g. data URLs).</summary>
+    private static string? TruncatePrescriptionUrlForList(string? url)
+    {
+        if (string.IsNullOrEmpty(url))
+            return url;
+        const int max = 2048;
+        return url.Length <= max ? url : null;
     }
 
     [HttpPost("requests/{requestId:int}/decline")]
