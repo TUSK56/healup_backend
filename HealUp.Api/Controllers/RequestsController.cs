@@ -169,65 +169,10 @@ public class RequestsController : ControllerBase
             .OrderByDescending(r => r.CreatedAt)
             .ToListAsync(ct);
 
-        var ids = data.Select(r => r.Id).ToList();
-        var latestOffers = await _db.PharmacyResponses
-            .AsNoTracking()
-            .Where(r => ids.Contains(r.RequestId))
-            .GroupBy(r => r.RequestId)
-            .Select(g => new { request_id = g.Key, latest_response_id = g.OrderByDescending(x => x.CreatedAt).Select(x => x.Id).FirstOrDefault() })
-            .ToListAsync(ct);
-
-        var latestMap = latestOffers.ToDictionary(x => x.request_id, x => x.latest_response_id);
-
-        var latestResponseIds = latestOffers
-            .Select(x => x.latest_response_id)
-            .Where(id => id > 0)
-            .Distinct()
-            .ToList();
-
-        var latestResponses = await _db.PharmacyResponses
-            .AsNoTracking()
-            .Where(pr => latestResponseIds.Contains(pr.Id))
-            .Include(pr => pr.Medicines)
-            .Include(pr => pr.Pharmacy)
-            .ToListAsync(ct);
-
-        var respById = latestResponses.ToDictionary(pr => pr.Id);
-
         return Ok(new
         {
             data = data.Select(r =>
             {
-                var pharmacyLabel = "بانتظار اختيار الصيدلية";
-                decimal? latestOfferGrandTotal = null;
-                var usesLatestOfferPricing = false;
-
-                if (latestMap.TryGetValue(r.Id, out var respId) && respId > 0 && respById.TryGetValue(respId, out var pr))
-                {
-                    pharmacyLabel = string.IsNullOrWhiteSpace(pr.Pharmacy?.Name) ? pharmacyLabel : pr.Pharmacy.Name.Trim();
-                    decimal medSum = 0;
-                    var anyPriced = false;
-                    foreach (var reqm in r.Medicines)
-                    {
-                        var rm = pr.Medicines.FirstOrDefault(x =>
-                            string.Equals(x.MedicineName, reqm.MedicineName, StringComparison.OrdinalIgnoreCase));
-                        if (rm is { Available: true, Price: > 0 })
-                        {
-                            medSum += rm.Price * reqm.Quantity;
-                            anyPriced = true;
-                        }
-                    }
-
-                    var qtySum = r.Medicines.Sum(m => (decimal)m.Quantity);
-                    if (anyPriced && qtySum > 0)
-                    {
-                        var del = qtySum >= 5 ? 0m : 25m;
-                        var vat = Math.Round(medSum * 0.15m, 2, MidpointRounding.AwayFromZero);
-                        latestOfferGrandTotal = medSum + del + vat;
-                        usesLatestOfferPricing = true;
-                    }
-                }
-
                 return new
                 {
                     id = r.Id,
@@ -237,11 +182,11 @@ public class RequestsController : ControllerBase
                     status = r.Status,
                     expires_at = r.ExpiresAt,
                     created_at = r.CreatedAt,
-                    has_offers = latestMap.ContainsKey(r.Id) && latestMap[r.Id] > 0,
-                    latest_offer_response_id = latestMap.TryGetValue(r.Id, out var rid) && rid > 0 ? rid : (int?)null,
-                    latest_pharmacy_name = pharmacyLabel,
-                    latest_offer_grand_total = latestOfferGrandTotal,
-                    uses_latest_offer_pricing = usesLatestOfferPricing,
+                    has_offers = false,
+                    latest_offer_response_id = (int?)null,
+                    latest_pharmacy_name = "بانتظار اختيار الصيدلية",
+                    latest_offer_grand_total = (decimal?)null,
+                    uses_latest_offer_pricing = false,
                     medicines = r.Medicines.Select(m => new
                     {
                         id = m.Id,

@@ -187,6 +187,25 @@ using (var scope = app.Services.CreateScope())
                                         IF COL_LENGTH(N'dbo.requests', N'NotifiedPharmacyCount') IS NULL
                                             ALTER TABLE dbo.requests ADD NotifiedPharmacyCount int NOT NULL CONSTRAINT DF_requests_NotifiedPharmacyCount DEFAULT(0);
 
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_requests_PatientId_CreatedAt' AND object_id = OBJECT_ID(N'dbo.requests'))
+                                            CREATE INDEX IX_requests_PatientId_CreatedAt ON dbo.requests (PatientId, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_requests_Status_ExpiresAt' AND object_id = OBJECT_ID(N'dbo.requests'))
+                                            CREATE INDEX IX_requests_Status_ExpiresAt ON dbo.requests (Status, ExpiresAt);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_pharmacy_responses_RequestId_CreatedAt' AND object_id = OBJECT_ID(N'dbo.pharmacy_responses'))
+                                            CREATE INDEX IX_pharmacy_responses_RequestId_CreatedAt ON dbo.pharmacy_responses (RequestId, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_pharmacy_responses_PharmacyId_RequestId' AND object_id = OBJECT_ID(N'dbo.pharmacy_responses'))
+                                            CREATE INDEX IX_pharmacy_responses_PharmacyId_RequestId ON dbo.pharmacy_responses (PharmacyId, RequestId);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_orders_PatientId_CreatedAt' AND object_id = OBJECT_ID(N'dbo.orders'))
+                                            CREATE INDEX IX_orders_PatientId_CreatedAt ON dbo.orders (PatientId, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_orders_PharmacyId_CreatedAt' AND object_id = OBJECT_ID(N'dbo.orders'))
+                                            CREATE INDEX IX_orders_PharmacyId_CreatedAt ON dbo.orders (PharmacyId, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_orders_RequestId_CreatedAt' AND object_id = OBJECT_ID(N'dbo.orders'))
+                                            CREATE INDEX IX_orders_RequestId_CreatedAt ON dbo.orders (RequestId, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_notifications_PatientId_IsRead_CreatedAt' AND object_id = OBJECT_ID(N'dbo.notifications'))
+                                            CREATE INDEX IX_notifications_PatientId_IsRead_CreatedAt ON dbo.notifications (PatientId, IsRead, CreatedAt DESC);
+                                        IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_notifications_PharmacyId_IsRead_CreatedAt' AND object_id = OBJECT_ID(N'dbo.notifications'))
+                                            CREATE INDEX IX_notifications_PharmacyId_IsRead_CreatedAt ON dbo.notifications (PharmacyId, IsRead, CreatedAt DESC);
+
                     IF COL_LENGTH(N'dbo.orders', N'PreparingAt') IS NULL
                       ALTER TABLE dbo.orders ADD PreparingAt datetime2 NULL;
                     IF COL_LENGTH(N'dbo.orders', N'PaymentMethod') IS NULL
