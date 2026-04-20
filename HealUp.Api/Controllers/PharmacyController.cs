@@ -166,15 +166,18 @@ public class PharmacyController : ControllerBase
 
         var now = DateTime.UtcNow;
 
+        // Incoming list: active requests this pharmacy can still bid on — other pharmacies' offers must NOT hide the request.
+        // Exclude: already ordered by patient, this pharmacy declined, or this pharmacy already submitted an offer.
         var requests = await _db.Requests
             .AsNoTracking()
             .Where(r => r.Status == "active" && r.ExpiresAt > now)
-            .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id))
+            .Where(r => !_db.Orders.Any(o => o.RequestId == r.Id))
             .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id && pr.PharmacyId == pharmacyId.Value))
             .Where(r => !_db.PharmacyDeclinedRequests.Any(d => d.RequestId == r.Id && d.PharmacyId == pharmacyId.Value))
             .Include(r => r.Medicines)
             .Include(r => r.Patient)
             .OrderBy(r => r.ExpiresAt)
+            .AsSplitQuery()
             .ToListAsync(ct);
 
         var results = new List<object>();

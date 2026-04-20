@@ -167,6 +167,7 @@ public class RequestsController : ControllerBase
             .Where(r => r.PatientId == patientId.Value)
             .Include(r => r.Medicines)
             .OrderByDescending(r => r.CreatedAt)
+            .AsSplitQuery()
             .ToListAsync(ct);
 
         return Ok(new

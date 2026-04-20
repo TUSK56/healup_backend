@@ -821,6 +821,3 @@ GO
 COMMIT;
 GO
 
-COMMIT;
-GO
-
