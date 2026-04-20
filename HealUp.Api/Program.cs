@@ -32,9 +32,10 @@ builder.Services.AddDbContext<HealUpDbContext>(options =>
         configuration.GetConnectionString("DefaultConnection"),
         sql =>
         {
+            // Fewer/shorter retries: repeated attempts on a cold or busy SQL host can push total wait past gateway timeouts.
             sql.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(5),
+                maxRetryCount: 2,
+                maxRetryDelay: TimeSpan.FromSeconds(2),
                 errorNumbersToAdd: null);
             sql.CommandTimeout(30);
         }));

@@ -166,11 +166,23 @@ public class RequestsController : ControllerBase
         const int maxPageSize = 200;
         var take = Math.Clamp(page_size ?? defaultPageSize, 1, maxPageSize);
 
-        var rows = await _db.Requests
+        // Two-step: ids first (narrow index seek on PatientId), then details — faster on large DBs.
+        var pageIds = await _db.Requests
             .AsNoTracking()
             .Where(r => r.PatientId == patientId.Value)
             .OrderByDescending(r => r.CreatedAt)
             .Take(take)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+
+        if (pageIds.Count == 0)
+        {
+            return Ok(new { data = Array.Empty<object>(), page_size = take });
+        }
+
+        var rows = await _db.Requests
+            .AsNoTracking()
+            .Where(r => pageIds.Contains(r.Id))
             .Select(r => new
             {
                 r.Id,
@@ -184,9 +196,12 @@ public class RequestsController : ControllerBase
             })
             .ToListAsync(ct);
 
+        var byId = rows.ToDictionary(x => x.Id);
+        var ordered = pageIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
+
         return Ok(new
         {
-            data = rows.Select(r =>
+            data = ordered.Select(r =>
             {
                 return new
                 {

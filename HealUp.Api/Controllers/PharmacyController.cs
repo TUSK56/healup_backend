@@ -170,8 +170,8 @@ public class PharmacyController : ControllerBase
         var take = Math.Clamp(page_size ?? defaultPageSize, 1, maxPageSize);
 
         // Incoming list: active requests this pharmacy can still bid on — other pharmacies' offers must NOT hide the request.
-        // Exclude: already ordered by patient, this pharmacy declined, or this pharmacy already submitted an offer.
-        // Project in-database + cap rows: loading unbounded rows caused multi-MB JSON and very slow responses on production DBs.
+        // Two-step load: (1) only Ids + TOP — avoids huge EF plans that time out on shared SQL hosts.
+        // (2) project details for at most take+1 ids.
         var baseQuery = _db.Requests
             .AsNoTracking()
             .Where(r => r.Status == "active" && r.ExpiresAt > now)
@@ -179,9 +179,20 @@ public class PharmacyController : ControllerBase
             .Where(r => !_db.PharmacyResponses.Any(pr => pr.RequestId == r.Id && pr.PharmacyId == pharmacyId.Value))
             .Where(r => !_db.PharmacyDeclinedRequests.Any(d => d.RequestId == r.Id && d.PharmacyId == pharmacyId.Value));
 
-        var projected = baseQuery
+        var idCandidates = await baseQuery
             .OrderBy(r => r.ExpiresAt)
             .Take(take + 1)
+            .Select(r => r.Id)
+            .ToListAsync(ct);
+
+        var hasMore = idCandidates.Count > take;
+        var pageIds = hasMore ? idCandidates.Take(take).ToList() : idCandidates;
+        if (pageIds.Count == 0)
+            return Ok(new { data = Array.Empty<object>(), page_size = take, has_more = false });
+
+        var rows = await _db.Requests
+            .AsNoTracking()
+            .Where(r => pageIds.Contains(r.Id))
             .Select(r => new
             {
                 r.Id,
@@ -191,17 +202,17 @@ public class PharmacyController : ControllerBase
                 r.PrescriptionUrl,
                 PatientId = r.Patient.Id,
                 PatientName = r.Patient.Name,
-                Medicines = r.Medicines
-                    .OrderBy(m => m.Id)
-                    .Select(m => new { m.Id, m.MedicineName, m.Quantity })
-            });
+                Medicines = r.Medicines.OrderBy(m => m.Id).Select(m => new { m.Id, m.MedicineName, m.Quantity })
+            })
+            .ToListAsync(ct);
 
-        var rows = await projected.ToListAsync(ct);
-        var hasMore = rows.Count > take;
-        if (hasMore)
-            rows.RemoveAt(rows.Count - 1);
+        var byId = rows.ToDictionary(x => x.Id);
+        var ordered = pageIds
+            .Where(byId.ContainsKey)
+            .Select(id => byId[id])
+            .ToList();
 
-        var results = rows.Select(row => new
+        var results = ordered.Select(row => new
         {
             request = new
             {
