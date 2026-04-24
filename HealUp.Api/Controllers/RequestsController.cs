@@ -199,10 +199,85 @@ public class RequestsController : ControllerBase
         var byId = rows.ToDictionary(x => x.Id);
         var ordered = pageIds.Where(byId.ContainsKey).Select(id => byId[id]).ToList();
 
+        // Latest offer per request (if any) — used by patient "My Orders" cards.
+        var requestIds = ordered.Select(r => r.Id).ToList();
+        var latestOffersRaw = await _db.PharmacyResponses
+            .AsNoTracking()
+            .Where(pr => requestIds.Contains(pr.RequestId))
+            .Select(pr => new
+            {
+                pr.Id,
+                pr.RequestId,
+                pr.CreatedAt,
+                PharmacyName = pr.Pharmacy.Name,
+                Medicines = pr.Medicines.Select(m => new { m.MedicineName, m.Available, m.Price, m.QuantityAvailable })
+            })
+            .OrderByDescending(pr => pr.CreatedAt)
+            .ToListAsync(ct);
+
+        var latestOfferByRequestId = new Dictionary<int, object>();
+        foreach (var offer in latestOffersRaw)
+        {
+            if (!latestOfferByRequestId.ContainsKey(offer.RequestId))
+                latestOfferByRequestId[offer.RequestId] = offer;
+        }
+
         return Ok(new
         {
             data = ordered.Select(r =>
             {
+                var hasRx = !string.IsNullOrWhiteSpace(r.PrescriptionUrl);
+                var hasReqMeds = r.Medicines.Any();
+
+                // Pull latest offer (if exists) and compute grand total from unit prices.
+                decimal? latestGrandTotal = null;
+                var usesLatestPricing = false;
+                var hasOffers = false;
+                int? latestOfferId = null;
+                string latestPharmacyName = "بانتظار اختيار الصيدلية";
+
+                if (latestOfferByRequestId.TryGetValue(r.Id, out var boxed) && boxed is not null)
+                {
+                    dynamic offer = boxed;
+                    hasOffers = true;
+                    latestOfferId = (int)offer.Id;
+                    latestPharmacyName = (string)offer.PharmacyName;
+
+                    // Build requested quantities map (for explicit medicines). For prescription-only, fall back to offered quantities.
+                    var reqQty = r.Medicines
+                        .Where(m => !string.IsNullOrWhiteSpace(m.MedicineName))
+                        .ToDictionary(m => m.MedicineName.Trim().ToLowerInvariant(), m => m.Quantity);
+
+                    decimal subtotal = 0m;
+                    int qtySum = 0;
+                    foreach (var med in offer.Medicines)
+                    {
+                        if (!(bool)med.Available) continue;
+                        var name = ((string)med.MedicineName ?? string.Empty).Trim();
+                        if (string.IsNullOrWhiteSpace(name)) continue;
+                        var key = name.ToLowerInvariant();
+                        var unit = (decimal)med.Price;
+                        if (unit < 0) continue;
+
+                        // For normal requests, patient quantity drives totals.
+                        // For prescription-only, pharmacy enters quantities in the offer.
+                        var q = reqQty.TryGetValue(key, out var requested) ? requested : (int)med.QuantityAvailable;
+                        if (q < 1) continue;
+
+                        subtotal += unit * q;
+                        qtySum += q;
+                    }
+
+                    if (subtotal > 0m || (hasRx && !hasReqMeds))
+                    {
+                        // Same delivery + VAT rules as frontend (coupon handled later at order creation).
+                        var deliveryFee = qtySum >= 5 ? 0m : 25m;
+                        var tax = subtotal * 0.15m;
+                        latestGrandTotal = subtotal + deliveryFee + tax;
+                        usesLatestPricing = true;
+                    }
+                }
+
                 return new
                 {
                     id = r.Id,
@@ -212,11 +287,11 @@ public class RequestsController : ControllerBase
                     status = r.Status,
                     expires_at = r.ExpiresAt,
                     created_at = r.CreatedAt,
-                    has_offers = false,
-                    latest_offer_response_id = (int?)null,
-                    latest_pharmacy_name = "بانتظار اختيار الصيدلية",
-                    latest_offer_grand_total = (decimal?)null,
-                    uses_latest_offer_pricing = false,
+                    has_offers = hasOffers,
+                    latest_offer_response_id = latestOfferId,
+                    latest_pharmacy_name = latestPharmacyName,
+                    latest_offer_grand_total = latestGrandTotal,
+                    uses_latest_offer_pricing = usesLatestPricing,
                     medicines = r.Medicines.Select(m => new
                     {
                         id = m.Id,

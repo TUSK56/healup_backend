@@ -337,7 +337,12 @@ public class PharmacyController : ControllerBase
                 .AsNoTracking()
                 .Where(pr => pr.RequestId == r.Id && pr.PharmacyId == pharmacyId.Value)
                 .OrderByDescending(pr => pr.CreatedAt)
-                .Select(pr => new { pr.Id, pr.CreatedAt })
+                .Select(pr => new
+                {
+                    pr.Id,
+                    pr.CreatedAt,
+                    Medicines = pr.Medicines.Select(m => new { m.MedicineName, m.Available, m.QuantityAvailable })
+                })
                 .FirstOrDefaultAsync(ct);
 
             if (latest is null)
@@ -349,11 +354,14 @@ public class PharmacyController : ControllerBase
                 response_id = latest.Id,
                 created_at = r.CreatedAt,
                 patient_name = r.Patient?.Name,
-                medicines = r.Medicines.Select(m => new
-                {
-                    medicine_name = m.MedicineName,
-                    quantity = m.Quantity
-                })
+                prescription_url = TruncatePrescriptionUrlForList(r.PrescriptionUrl),
+                medicines = latest.Medicines
+                    .Where(m => m.Available)
+                    .Select(m => new
+                    {
+                        medicine_name = m.MedicineName,
+                        quantity = m.QuantityAvailable
+                    })
             });
         }
 

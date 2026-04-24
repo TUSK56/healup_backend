@@ -103,8 +103,9 @@ public class OffersController : ControllerBase
             {
                 MedicineName = m.MedicineName.Trim(),
                 Available = m.Available,
-                // Offers use unit pricing: one piece price, patient quantity is applied later at order creation.
-                QuantityAvailable = m.Available ? 1 : 0,
+                // Offers use unit pricing. For normal "drug" requests, patient quantity is applied later at order creation.
+                // For prescription flows (patient sent an Rx), the pharmacy must provide quantities here.
+                QuantityAvailable = requestHasPrescription ? m.QuantityAvailable : (m.Available ? 1 : 0),
                 Price = m.Price
             }).ToList()
         };
