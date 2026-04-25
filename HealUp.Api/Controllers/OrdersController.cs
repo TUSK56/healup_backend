@@ -48,6 +48,12 @@ public class OrdersController : ControllerBase
         [JsonPropertyName("coupon_percent")]
         [Range(0, 100)]
         public decimal? CouponPercent { get; set; }
+
+        [JsonPropertyName("patient_latitude")]
+        public double? PatientLatitude { get; set; }
+
+        [JsonPropertyName("patient_longitude")]
+        public double? PatientLongitude { get; set; }
     }
 
     public class UpdateOrderStatusDto
@@ -99,10 +105,15 @@ public class OrdersController : ControllerBase
                 .Select(reqMed => reqMed.Quantity)
                 .FirstOrDefault();
 
+            // Patient-requested lines use request quantity; prescription / offer-only lines use pharmacy QuantityAvailable.
+            var qty = requestedQty > 0
+                ? requestedQty
+                : (m.QuantityAvailable > 0 ? m.QuantityAvailable : 1);
+
             return new OrderItem
             {
                 MedicineName = m.MedicineName,
-                Quantity = requestedQty > 0 ? requestedQty : 1,
+                Quantity = qty,
                 Price = m.Price
             };
         }).ToList();
@@ -134,6 +145,17 @@ public class OrdersController : ControllerBase
         };
 
         response.Request.Status = "confirmed";
+
+        if (dto.PatientLatitude is { } lat && dto.PatientLongitude is { } lng
+            && double.IsFinite(lat) && double.IsFinite(lng))
+        {
+            var patientRow = await _db.Patients.SingleOrDefaultAsync(p => p.Id == patientId.Value, ct);
+            if (patientRow is not null)
+            {
+                patientRow.Latitude = lat;
+                patientRow.Longitude = lng;
+            }
+        }
 
         _db.Orders.Add(order);
         await _db.SaveChangesAsync(ct);

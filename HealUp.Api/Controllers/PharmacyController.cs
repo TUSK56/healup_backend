@@ -239,13 +239,13 @@ public class PharmacyController : ControllerBase
         return Ok(new { data = results, page_size = take, has_more = hasMore });
     }
 
-    /// <summary>List endpoints must not echo huge accidently-stored prescription payloads (e.g. data URLs).</summary>
+    /// <summary>
+    /// Pharmacy must always be able to access prescription payloads (including legacy data URLs)
+    /// so downloading/viewing the prescription from new-orders does not break.
+    /// </summary>
     private static string? TruncatePrescriptionUrlForList(string? url)
     {
-        if (string.IsNullOrEmpty(url))
-            return url;
-        const int max = 2048;
-        return url.Length <= max ? url : null;
+        return url;
     }
 
     [HttpPost("requests/{requestId:int}/decline")]

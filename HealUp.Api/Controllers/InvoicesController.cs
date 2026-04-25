@@ -107,7 +107,7 @@ public class InvoicesController : ControllerBase
         }
 
         var qtySum = latestOrder?.Items.Sum(i => i.Quantity)
-            ?? request.Medicines.Sum(m => m.Quantity);
+            ?? (request.Medicines.Count > 0 ? request.Medicines.Sum(m => m.Quantity) : 0);
         var deliveryFee = latestOrder?.DeliveryFee ?? (qtySum >= 5 ? 0m : 25m);
         var couponPercent = latestOrder?.CouponPercent is > 0m and <= 100m
             ? latestOrder.CouponPercent.Value
@@ -220,18 +220,30 @@ public class InvoicesController : ControllerBase
                                 header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignCenter().Text("الإجمالي").SemiBold();
                             });
 
-                            foreach (var med in request.Medicines)
+                            if (latestOrder is not null && latestOrder.Items.Count > 0)
                             {
-                                var unit = latestOffer?.Medicines.FirstOrDefault(m =>
-                                    string.Equals(m.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
-                                if (latestOrder is not null)
-                                    unit = latestOrder.Items.FirstOrDefault(i => string.Equals(i.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
-                                var lineTotal = unit.HasValue ? unit.Value * med.Quantity : (decimal?)null;
+                                foreach (var item in latestOrder.Items)
+                                {
+                                    var lineTotal = item.Price * item.Quantity;
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text(item.MedicineName);
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(item.Quantity.ToString());
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(item.Price.ToString("0.00"));
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.ToString("0.00"));
+                                }
+                            }
+                            else
+                            {
+                                foreach (var med in request.Medicines)
+                                {
+                                    var unit = latestOffer?.Medicines.FirstOrDefault(m =>
+                                        string.Equals(m.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
+                                    var lineTotal = unit.HasValue ? unit.Value * med.Quantity : (decimal?)null;
 
-                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text(med.MedicineName);
-                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(med.Quantity.ToString());
-                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(unit.HasValue ? unit.Value.ToString("0.00") : "—");
-                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.HasValue ? lineTotal.Value.ToString("0.00") : "—");
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text(med.MedicineName);
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(med.Quantity.ToString());
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(unit.HasValue ? unit.Value.ToString("0.00") : "—");
+                                    table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.HasValue ? lineTotal.Value.ToString("0.00") : "—");
+                                }
                             }
                         });
                     });
