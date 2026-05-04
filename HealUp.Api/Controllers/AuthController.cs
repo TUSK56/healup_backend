@@ -1,4 +1,7 @@
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using HealUp.Api.Data;
 using HealUp.Api.Models;
 using HealUp.Api.Services;
@@ -45,10 +48,10 @@ public class AuthController : ControllerBase
         [MaxLength(500)]
         public string? AddressDetails { get; set; }
 
-        [Required, MinLength(6)]
+        [Required, MinLength(12), MaxLength(15)]
         public string Password { get; set; } = string.Empty;
 
-        [Required, MinLength(6)]
+        [Required, MinLength(12), MaxLength(15)]
         public string PasswordConfirmation { get; set; } = string.Empty;
 
         public double? Latitude { get; set; }
@@ -81,10 +84,10 @@ public class AuthController : ControllerBase
         [MaxLength(500)]
         public string? AddressDetails { get; set; }
 
-        [Required, MinLength(6)]
+        [Required, MinLength(12), MaxLength(15)]
         public string Password { get; set; } = string.Empty;
 
-        [Required, MinLength(6)]
+        [Required, MinLength(12), MaxLength(15)]
         public string PasswordConfirmation { get; set; } = string.Empty;
 
         public double? Latitude { get; set; }
@@ -107,6 +110,10 @@ public class AuthController : ControllerBase
     {
         [Required]
         public string Identifier { get; set; } = string.Empty;
+
+        /// <summary>Optional: patient | pharmacy | admin — narrows account lookup for OTP.</summary>
+        [JsonPropertyName("guard")]
+        public string? Guard { get; set; }
     }
 
     public class OtpVerifyDto
@@ -121,11 +128,53 @@ public class AuthController : ControllerBase
     private string GetTestingOtp() =>
         _configuration["Otp:TestingCode"] ?? "0000";
 
+    private static bool MeetsStrictPasswordRules(string password) =>
+        password.Length is >= 12 and <= 15 && Regex.IsMatch(password, "[!@#$%^]");
+
+    private static string DigitsOnly(string value) =>
+        new string((value ?? string.Empty).Where(char.IsDigit).ToArray());
+
+    private async Task<bool> PatientMatchesIdentifierAsync(string identifier, CancellationToken ct)
+    {
+        var id = identifier.Trim();
+        if (id.Length == 0) return false;
+        if (await _db.Patients.AnyAsync(u => u.Email == id, ct))
+            return true;
+        var digits = DigitsOnly(id);
+        if (digits.Length < 6) return false;
+        return await _db.Patients.AnyAsync(u => u.Phone != null && DigitsOnly(u.Phone) == digits, ct);
+    }
+
+    private async Task<bool> PharmacyMatchesIdentifierAsync(string identifier, CancellationToken ct)
+    {
+        var id = identifier.Trim();
+        if (id.Length == 0) return false;
+        if (await _db.Pharmacies.AnyAsync(u => u.Email == id, ct))
+            return true;
+        var digits = DigitsOnly(id);
+        if (digits.Length < 6) return false;
+        return await _db.Pharmacies.AnyAsync(u => u.Phone != null && DigitsOnly(u.Phone) == digits, ct);
+    }
+
+    private async Task<bool> AdminMatchesIdentifierAsync(string identifier, CancellationToken ct)
+    {
+        var id = identifier.Trim();
+        if (id.Length == 0) return false;
+        if (await _db.Admins.AnyAsync(u => u.Email == id, ct))
+            return true;
+        var digits = DigitsOnly(id);
+        if (digits.Length < 6) return false;
+        return await _db.Admins.AnyAsync(u => u.Phone != null && DigitsOnly(u.Phone) == digits, ct);
+    }
+
     [HttpPost("register/patient")]
     public async Task<IActionResult> RegisterPatient([FromBody] PatientRegisterDto dto, CancellationToken ct)
     {
         if (dto.Password != dto.PasswordConfirmation)
             return BadRequest(new { message = "HealUp: Passwords do not match." });
+
+        if (!MeetsStrictPasswordRules(dto.Password))
+            return BadRequest(new { message = "HealUp: Password must be 12-15 characters and include at least one of ! @ # $ % ^." });
 
         if (await _db.Patients.AnyAsync(u => u.Email == dto.Email, ct))
             return Conflict(new { message = "HealUp: Email already registered." });
@@ -188,6 +237,9 @@ public class AuthController : ControllerBase
     {
         if (dto.Password != dto.PasswordConfirmation)
             return BadRequest(new { message = "HealUp: Passwords do not match." });
+
+        if (!MeetsStrictPasswordRules(dto.Password))
+            return BadRequest(new { message = "HealUp: Password must be 12-15 characters and include at least one of ! @ # $ % ^." });
 
         if (await _db.Pharmacies.AnyAsync(p => p.Email == dto.Email, ct))
             return Conflict(new { message = "HealUp: Pharmacy email already registered." });
@@ -300,13 +352,31 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("otp/send")]
-    public IActionResult SendOtp([FromBody] OtpSendDto dto)
+    public async Task<IActionResult> SendOtp([FromBody] OtpSendDto dto, CancellationToken ct)
     {
+        var id = (dto.Identifier ?? string.Empty).Trim();
+        if (id.Length == 0)
+            return BadRequest(new { message = "HealUp: Identifier is required." });
+
+        var guard = (dto.Guard ?? string.Empty).Trim().ToLowerInvariant();
+        var exists = guard switch
+        {
+            "pharmacy" => await PharmacyMatchesIdentifierAsync(id, ct),
+            "admin" => await AdminMatchesIdentifierAsync(id, ct),
+            "user" or "patient" => await PatientMatchesIdentifierAsync(id, ct),
+            _ => await PatientMatchesIdentifierAsync(id, ct)
+                 || await PharmacyMatchesIdentifierAsync(id, ct)
+                 || await AdminMatchesIdentifierAsync(id, ct),
+        };
+
+        if (!exists)
+            return NotFound(new { message = "HealUp: No account found for this email or phone number." });
+
         var otp = GetTestingOtp();
         return Ok(new
         {
             message = "HealUp: OTP sent successfully (testing mode).",
-            identifier = dto.Identifier,
+            identifier = id,
             otp
         });
     }
