@@ -3,6 +3,7 @@ using HealUp.Api.Data;
 using HealUp.Api.Hubs;
 using HealUp.Api.Models;
 using HealUp.Api.Services;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -25,6 +26,13 @@ if (builder.Environment.IsDevelopment()
 }
 
 var configuration = builder.Configuration;
+
+// Persist DataProtection keys (avoids ephemeral in-memory keys on hosts without user profile / registry).
+var dataProtectionKeysDir = Path.Combine(builder.Environment.ContentRootPath, "data-protection-keys");
+Directory.CreateDirectory(dataProtectionKeysDir);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysDir))
+    .SetApplicationName("HealUp.Api");
 
 // Database (SQL Server)
 builder.Services.AddDbContext<HealUpDbContext>(options =>
@@ -88,6 +96,8 @@ builder.Services.AddScoped<CloudinaryService>();
 builder.Services.AddScoped<GoogleMapsService>();
 builder.Services.AddScoped<JwtTokenService>();
 builder.Services.AddScoped<NotificationService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<SmtpEmailSender>();
 
 builder.Services.AddSignalR();
 
@@ -260,6 +270,41 @@ app.MapGet("/health", () => Results.Ok(new
     status = "healthy",
     timeUtc = DateTime.UtcNow
 })).AllowAnonymous();
+
+// Verify which SQL database the API is using (helps catch wrong appsettings.Production.json on MonsterASP).
+app.MapGet("/health/db", async (HealUpDbContext db, CancellationToken ct) =>
+{
+    try
+    {
+        var canConnect = await db.Database.CanConnectAsync(ct);
+        if (!canConnect)
+            return Results.Json(new { canConnect = false, message = "HealUp: Cannot connect to SQL Server." }, statusCode: 503);
+
+        await using var conn = db.Database.GetDbConnection();
+        if (conn.State != System.Data.ConnectionState.Open)
+            await conn.OpenAsync(ct);
+
+        var database = conn.Database;
+        var patientCount = await db.Patients.CountAsync(ct);
+        var pharmacyCount = await db.Pharmacies.CountAsync(ct);
+        var adminCount = await db.Admins.CountAsync(ct);
+
+        return Results.Ok(new
+        {
+            canConnect = true,
+            database,
+            dataSource = conn.DataSource,
+            patientCount,
+            pharmacyCount,
+            adminCount,
+            environment = app.Environment.EnvironmentName
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Json(new { canConnect = false, message = ex.Message }, statusCode: 503);
+    }
+}).AllowAnonymous();
 
 // One-time hosted DB fill (same data as local DemoSeed). Configure DemoSeed:SetupKey (12+ chars), then POST with header X-HealUp-Setup-Key. Remove SetupKey after use.
 app.MapPost(

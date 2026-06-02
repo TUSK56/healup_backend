@@ -8,7 +8,9 @@
 
 ### MonsterASP SQL Server (hosted database)
 
-The repo includes **`appsettings.Production.example.json`** with the same **server and database name** pattern as MonsterASP (`db47940.databaseasp.net`). Do **not** commit real passwords.
+The repo includes **`appsettings.Production.example.json`** with the MonsterASP server pattern (`db49446.databaseasp.net`). Copy it to **`appsettings.Production.json`** (gitignored) with your real password. Do **not** commit passwords.
+
+**Important:** On MonsterASP, `ASPNETCORE_ENVIRONMENT` is **Production**, so **`appsettings.Production.json` overrides `appsettings.json`**. If registrations succeed in Swagger but rows are missing in your SQL panel, the API is almost certainly pointed at a **different database** — open `https://YOUR-SITE.runasp.net/health/db` after deploy and confirm `database` is `db49446`.
 
 1. **Local publish (recommended):** Copy `appsettings.Production.example.json` to **`appsettings.Production.json`** (this file is **gitignored**), put your real password in `ConnectionStrings:DefaultConnection`, then run `dotnet publish .\HealUp.Api\HealUp.Api.csproj -c Release -p:PublishProfile=MonsterASP -o .\publish`. The publish output will include your production settings if present on disk.
 2. **Hosting panel only:** Set environment variable **`ConnectionStrings__DefaultConnection`** to your full connection string (MonsterASP often has a “Connection strings” UI). Then you do not need `appsettings.Production.json` on disk.
@@ -82,6 +84,6 @@ The hosted database has the **schema** from EF migrations but may be **empty** o
 
 4. In MonsterASP **Run T-SQL**, paste the script. If the file is **too large** for one paste, split at natural boundaries (e.g. after `COMMIT` is wrong — keep one transaction; instead split into multiple runs: first run DELETEs only, then run INSERTs per table in order, or increase host limits if available).
 
-5. **Warning:** This **wipes** `patients`, `pharmacies`, `orders`, etc. on the **target** database you connect to when you **execute** the script. Always connect the MonsterASP tool to **`db47940`** only and verify the script before running.
+5. **Warning:** This **wipes** `patients`, `pharmacies`, `orders`, etc. on the **target** database you connect to when you **execute** the script. Always connect the MonsterASP tool to your active database (e.g. **`db49446`**) only and verify the script before running.
 
 The exporter project is **`HealUp.DataExport`** (console, `Microsoft.Data.SqlClient` only — no EF required).
