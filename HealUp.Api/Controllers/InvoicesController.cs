@@ -16,10 +16,12 @@ namespace HealUp.Api.Controllers;
 public class InvoicesController : ControllerBase
 {
     private readonly HealUpDbContext _db;
+    private readonly ILogger<InvoicesController> _logger;
 
-    public InvoicesController(HealUpDbContext db)
+    public InvoicesController(HealUpDbContext db, ILogger<InvoicesController> logger)
     {
         _db = db;
+        _logger = logger;
     }
 
     [HttpGet("requests/{requestId:int}/invoice")]
@@ -124,30 +126,32 @@ public class InvoicesController : ControllerBase
         var orderStatusLabel = ToArabicOrderStatus(latestOrder?.Status);
         var createdAt = request.CreatedAt.ToString("yyyy-MM-dd HH:mm");
 
-        TryRegisterArabicFont();
+        InvoicePdfFont.EnsureRegistered();
+        var pdfFont = InvoicePdfFont.FamilyName;
 
-        var pdfBytes = Document.Create(container =>
+        byte[] pdfBytes;
+        try
+        {
+            pdfBytes = Document.Create(container =>
         {
             container.Page(page =>
             {
                 page.Margin(24);
                 page.Size(PageSizes.A4);
-                page.DefaultTextStyle(x => x.FontFamily("Arial").FontSize(12));
+                page.DefaultTextStyle(x => x.FontFamily(pdfFont).FontSize(12));
 
-                page.Background().Layers(layers =>
+                // QuestPDF 2024+: Layers requires exactly one PrimaryLayer (plain Layer() is invalid).
+                page.Background().Element(bg =>
                 {
-                    layers.Layer().Element(bg =>
-                    {
-                        bg.Background(Colors.Grey.Lighten5)
-                            .Row(r =>
-                            {
-                                r.ConstantItem(14).Background(Colors.Blue.Darken2);
-                                r.RelativeItem().AlignCenter().AlignMiddle().Text("HealUp")
-                                    .FontSize(92)
-                                    .SemiBold()
-                                    .FontColor(Colors.Blue.Lighten5);
-                            });
-                    });
+                    bg.Background(Colors.Grey.Lighten5)
+                        .Row(r =>
+                        {
+                            r.ConstantItem(14).Background(Colors.Blue.Darken2);
+                            r.RelativeItem().AlignCenter().AlignMiddle().Text("HealUp")
+                                .FontSize(92)
+                                .SemiBold()
+                                .FontColor(Colors.Blue.Lighten5);
+                        });
                 });
 
                 page.Header().Element(header =>
@@ -220,9 +224,13 @@ public class InvoicesController : ControllerBase
                                 header.Cell().Background(Colors.Blue.Lighten4).Padding(6).AlignCenter().Text("الإجمالي").SemiBold();
                             });
 
-                            if (latestOrder is not null && latestOrder.Items.Count > 0)
+                            var orderItems = latestOrder?.Items;
+                            var hasOrderLines = orderItems is { Count: > 0 };
+                            var hasRequestMedicines = request.Medicines.Count > 0;
+
+                            if (hasOrderLines)
                             {
-                                foreach (var item in latestOrder.Items)
+                                foreach (var item in orderItems!)
                                 {
                                     var lineTotal = item.Price * item.Quantity;
                                     table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text(item.MedicineName);
@@ -231,11 +239,12 @@ public class InvoicesController : ControllerBase
                                     table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.ToString("0.00"));
                                 }
                             }
-                            else
+                            else if (hasRequestMedicines)
                             {
+                                var offerMeds = latestOffer?.Medicines;
                                 foreach (var med in request.Medicines)
                                 {
-                                    var unit = latestOffer?.Medicines.FirstOrDefault(m =>
+                                    var unit = offerMeds?.FirstOrDefault(m =>
                                         string.Equals(m.MedicineName, med.MedicineName, StringComparison.OrdinalIgnoreCase))?.Price;
                                     var lineTotal = unit.HasValue ? unit.Value * med.Quantity : (decimal?)null;
 
@@ -244,6 +253,13 @@ public class InvoicesController : ControllerBase
                                     table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(unit.HasValue ? unit.Value.ToString("0.00") : "—");
                                     table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text(lineTotal.HasValue ? lineTotal.Value.ToString("0.00") : "—");
                                 }
+                            }
+                            else
+                            {
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignRight().Text("لا توجد بنود في هذا الطلب");
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text("—");
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text("—");
+                                table.Cell().BorderBottom(1).BorderColor(Colors.Grey.Lighten3).PaddingVertical(7).AlignCenter().Text("—");
                             }
                         });
                     });
@@ -304,6 +320,12 @@ public class InvoicesController : ControllerBase
                 });
             });
         }).GeneratePdf();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "QuestPDF invoice generation failed for request {RequestId}", requestId);
+            return StatusCode(500, new { message = "HealUp: Could not generate invoice PDF." });
+        }
 
         return File(pdfBytes, "application/pdf", $"healup-receipt-request-{request.Id}.pdf");
     }
@@ -314,18 +336,74 @@ public class InvoicesController : ControllerBase
         return int.TryParse(value, out var id) ? id : null;
     }
 
-    private static void TryRegisterArabicFont()
+    /// <summary>
+    /// Registers an Arabic-capable font once. Bundled Noto Sans Arabic works on Linux/shared hosts without Windows Fonts.
+    /// </summary>
+    private static class InvoicePdfFont
     {
-        // Use Windows system font that supports Arabic. This avoids bundling font binaries in repo.
-        try
+        private static readonly object Gate = new();
+        private static bool _done;
+
+        public static string FamilyName { get; private set; } = "Arial";
+
+        public static void EnsureRegistered()
         {
-            var arial = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "arial.ttf");
-            if (System.IO.File.Exists(arial))
-                FontManager.RegisterFont(System.IO.File.OpenRead(arial));
-        }
-        catch
-        {
-            // best-effort only
+            if (_done)
+                return;
+            lock (Gate)
+            {
+                if (_done)
+                    return;
+
+                static bool TryRegister(string path, string successFamily)
+                {
+                    try
+                    {
+                        if (!System.IO.File.Exists(path))
+                            return false;
+                        using var fs = System.IO.File.OpenRead(path);
+                        FontManager.RegisterFont(fs);
+                        FamilyName = successFamily;
+                        return true;
+                    }
+                    catch
+                    {
+                        return false;
+                    }
+                }
+
+                var baseDir = AppContext.BaseDirectory;
+                var bundled = Path.Combine(baseDir, "Fonts", "NotoSansArabic-Regular.ttf");
+                if (TryRegister(bundled, "Noto Sans Arabic"))
+                {
+                    _done = true;
+                    return;
+                }
+
+                // Common Linux server layout (optional fallback if publish omitted Fonts/).
+                var linuxNoto = "/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf";
+                if (TryRegister(linuxNoto, "Noto Sans Arabic"))
+                {
+                    _done = true;
+                    return;
+                }
+
+                try
+                {
+                    var arial = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "arial.ttf");
+                    if (TryRegister(arial, "Arial"))
+                    {
+                        _done = true;
+                        return;
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                _done = true;
+            }
         }
     }
 

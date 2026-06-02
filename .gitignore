@@ -21,6 +21,9 @@ publish/
 *.log
 *.tmp
 
+## ASP.NET Data Protection keys (created under ContentRoot at runtime)
+**/data-protection-keys/
+
 ## Local SQL data dumps (may contain hashes / PII)
 healup-data-export.sql
 **/healup-data-export.sql
